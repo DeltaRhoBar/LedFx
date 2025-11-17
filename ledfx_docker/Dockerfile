@@ -33,7 +33,7 @@ COPY --chmod=755 ./ledfx_docker/start.sh $HOME/start.sh
 COPY --from=build /app/.venv /app/.venv
 ENV IS_RELEASE=True
 EXPOSE 8888/tcp
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/root/start.sh"]
 LABEL org.opencontainers.image.source="https://github.com/LedFx/LedFx"
 LABEL org.opencontainers.image.description="LedFx makes your LEDs dance to audio"
 #build with "docker build -f ledfx_docker/Dockerfile -t ledfx ."
