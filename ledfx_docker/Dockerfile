@@ -32,8 +32,7 @@ WORKDIR "$HOME"
 COPY ./ledfx_docker/pulse /etc/pulse
 COPY --chmod=755 ./ledfx_docker/start.sh $HOME/start.sh
 COPY --from=build /app/.venv /app/.venv
-ARG IS_RELEASE
-ENV IS_RELEASE=$IS_RELEASE
+ENV IS_RELEASE=True
 EXPOSE 8888/tcp
 ENTRYPOINT ["/$HOME/start.sh"]
 LABEL org.opencontainers.image.source="https://github.com/LedFx/LedFx"
