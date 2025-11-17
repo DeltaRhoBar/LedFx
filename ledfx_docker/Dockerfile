@@ -32,12 +32,8 @@ WORKDIR "$HOME"
 COPY ./ledfx_docker/pulse /etc/pulse
 COPY --chmod=755 ./ledfx_docker/start.sh $HOME/start.sh
 COPY --from=build /app/.venv /app/.venv
-ARG GITHUB_SHA
 ARG IS_RELEASE
-ENV GITHUB_SHA=$GITHUB_SHA
 ENV IS_RELEASE=$IS_RELEASE
-HEALTHCHECK --interval=60s --timeout=3s --start-period=3s --retries=3 \
-  CMD pactl info > /dev/null 2>&1 || exit 1
 EXPOSE 8888/tcp
 ENTRYPOINT ["/$HOME/start.sh"]
 LABEL org.opencontainers.image.source="https://github.com/LedFx/LedFx"
