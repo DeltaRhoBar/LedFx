@@ -27,14 +27,14 @@ ENV PYTHONUNBUFFERED=1
 ENV PULSE_SERVER="unix:$HOME/.config/pulse/pulseaudio.socket"
 ENV PULSE_COOKIE="$HOME/.config/pulse/cookie"
 RUN usermod -aG audio,pulse,pulse-access root \
-  && chown -R root:root "$HOME"
+  && chown -R root:root "/root"
 WORKDIR "$HOME"
 COPY ./ledfx_docker/pulse /etc/pulse
 COPY --chmod=755 ./ledfx_docker/start.sh $HOME/start.sh
 COPY --from=build /app/.venv /app/.venv
 ENV IS_RELEASE=True
 EXPOSE 8888/tcp
-ENTRYPOINT ["/$HOME/start.sh"]
+ENTRYPOINT ["/root/start.sh"]
 LABEL org.opencontainers.image.source="https://github.com/LedFx/LedFx"
 LABEL org.opencontainers.image.description="LedFx makes your LEDs dance to audio"
 #build with "docker build -f ledfx_docker/Dockerfile -t ledfx ."
