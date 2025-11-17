@@ -24,7 +24,7 @@ RUN --mount=type=cache,id=apt-cache-${TARGETARCH},target=/var/cache/apt,sharing=
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
-ENV PULSE_COOKIE="$HOME/.config/pulse/cookie"
+ENV PULSE_COOKIE="/root/.config/pulse/cookie"
 RUN usermod -aG audio,pulse,pulse-access root \
   && chown -R root:root "/root"
 WORKDIR "$HOME"
