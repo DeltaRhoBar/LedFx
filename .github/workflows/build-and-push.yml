@@ -38,7 +38,8 @@ jobs:
       - name: Build and Push Image
         uses: docker/build-push-action@v6
         with:
-          context: ./ledfx_docker
+          context: .
+          file: ./ledfx_docker/Dockerfile
           push: true
           no-cache: false
           tags: ${{ env.IMAGE_TAG }}
