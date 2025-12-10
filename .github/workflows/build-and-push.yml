@@ -40,6 +40,6 @@ jobs:
         with:
           context: ./ledfx_docker/
           push: true
-          cache: false
+          no-cache: true
           tags: ${{ env.IMAGE_TAG }}
         
