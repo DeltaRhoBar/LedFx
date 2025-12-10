@@ -1,14 +1,17 @@
 name: Build Frozen Binaries for Distribution
 
 on:
-  push:
-    paths-ignore:
-      - "frontend/**"
-      - "docs/**"
-      - "tests/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".vscode/**"
   workflow_dispatch:
+
+#on:
+#  push:
+#    paths-ignore:
+#      - "frontend/**"
+#      - "docs/**"
+#      - "tests/**"
+#      - ".github/ISSUE_TEMPLATE/**"
+#      - ".vscode/**"
+#  workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
