@@ -1,16 +1,19 @@
 name: CI Build LedFx
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths-ignore:
-      - 'frontend/**'
-      - 'docs/**'
-      - 'ledfx_frontend/**'
-  schedule:
-    - cron: '0 8 * * *'
   workflow_dispatch:
+
+#on:
+#  pull_request:
+#    branches:
+#      - main
+#    paths-ignore:
+#      - 'frontend/**'
+#      - 'docs/**'
+#      - 'ledfx_frontend/**'
+#  schedule:
+#    - cron: '0 8 * * *'
+#  workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
