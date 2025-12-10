@@ -16,7 +16,7 @@ LedFx is a real-time LED visualization system that synchronizes LED lighting wit
 
 ## Development Environment
 
-- **Python Version**: 3.10-3.13 supported
+- **Python Version**: 3.10-3.13 supported (requires-python = ">=3.10,<3.14")
 - **Build System**: `uv` workspace with `pyproject.toml`
 - **License**: GPL-3.0
 - **Dependencies**: Audio processing (aubio-ledfx, sounddevice), LED control (openrgb-python, sacn), web framework (aiohttp)
@@ -25,20 +25,24 @@ LedFx is a real-time LED visualization system that synchronizes LED lighting wit
 ### Workspace Structure
 ```
 ledfx/                    # Main package
-├── effects/             # Effect implementations (50+ files)
-├── devices/             # Device drivers (WLED, E1.31, DDP, etc.)
 ├── api/                 # REST API endpoints
+├── devices/             # Device drivers (WLED, E1.31, DDP, etc.)
+├── effects/             # Effect implementations (50+ files)
 ├── integrations/        # External service integrations
-├── rust/               # Rust-accelerated effects
-├── core.py             # Application core
-├── virtuals.py         # Virtual LED strip management
-└── config.py           # Configuration management
+├── libraries/           # Shared libraries (cache, lifxdev)
+├── tools/               # Development tools (TypeScript generator, etc.)
+├── color.py             # Color manipulation utilities
+├── config.py            # Configuration management
+├── core.py              # Application core
+├── events.py            # Event system
+├── utils.py             # Utility functions and BaseRegistry
+└── virtuals.py          # Virtual LED strip management
 ```
 
 ## Effect System Architecture
 
 ### Effect Base Class (`ledfx/effects/__init__.py`)
-All effects inherit from the `Effect` base class which provides:
+All effects inherit from the `Effect` base class (which extends `BaseRegistry` from `utils.py`) which provides:
 - **Pixel Management**: `self.pixels` array for RGB values
 - **Configuration**: Voluptuous schema validation
 - **Rendering**: `render()` method for effect computation
@@ -50,7 +54,6 @@ All effects inherit from the `Effect` base class which provides:
 2. **2D Effects**: Matrix-based effects for LED panels
 3. **1D Effects**: Linear strip effects
 4. **Temporal Effects**: Time-based animations
-5. **Rust Effects**: Performance-critical effects in Rust
 
 ### Common Effect Patterns
 ```python
@@ -79,7 +82,8 @@ class MyEffect(Effect):
 - **OSC**: Open Sound Control protocol
 
 ### Device Base Classes
-- `Device`: Base device class
+All devices inherit from `BaseRegistry` (from `utils.py`):
+- `Device`: Base device class with CONFIG_SCHEMA
 - `NetworkedDevice`: IP-based devices with address resolution
 - `UDPDevice`: UDP-based network devices
 - `SerialDevice`: Serial port devices
@@ -112,11 +116,29 @@ Virtuals abstract physical LED hardware, allowing:
 ## API Design
 
 ### REST Endpoints
-- `/api/devices` - Device management
+Key API endpoints include:
 - `/api/virtuals` - Virtual strip control
 - `/api/effects` - Effect library
+- `/api/devices` - Device management
 - `/api/config` - Configuration management
-- `/api/audio` - Audio device settings
+- `/api/scenes` - Scene coordination
+- `/api/integrations` - External service connections
+- `/api/cache/images` - Image cache management
+- `/api/assets` - Secure asset storage and management
+
+### REST API Implementation Standards
+
+**CRITICAL**: Each API file in `ledfx/api/` must contain exactly ONE `RestEndpoint` class. The RegistryLoader auto-discovery pattern requires one endpoint class per file for proper registration. If you need multiple related endpoints (e.g., main endpoint + download endpoint), create separate files following the naming pattern seen in cache API (`cache_images.py` + `cache_images_refresh.py`).
+
+**IMPORTANT**: Always use `RestEndpoint` base class helper methods instead of direct `web.json_response()` calls for consistent response formatting and frontend snackbar notifications.
+
+#### Helper Methods
+- **`await self.request_success(type, message, data=None)`** - Operations needing user feedback (type: "success", "info", "warning", "error")
+- **`await self.bare_request_success(data)`** - Operations without snackbar notifications
+- **`await self.invalid_request(message, type="error")`** - Validation errors and failures (returns HTTP 200 with status:"failed" for frontend compatibility)
+- **`await self.json_decode_error()`** - JSON parsing errors (use in try/except with JSONDecodeError)
+
+Do NOT use `web.json_response()` directly.
 
 ### WebSocket Events
 - Real-time pixel updates
@@ -132,15 +154,27 @@ Virtuals abstract physical LED hardware, allowing:
 - **isort**: Import organization
 - **Type Hints**: Use where beneficial
 
+### Import Statement Placement
+
+- Always place all import statements at the top of each Python file, before any module-level code, class, or function definitions. Do not use inline or local imports except for rare cases (e.g., to avoid circular dependencies or for performance-critical code paths).
+
+### Path Handling Standards
+
+**IMPORTANT**: Always use `os.path` module for path operations, NOT `pathlib`. This is the established codebase convention with 20+ uses throughout the project.
+
+Use `os.path.join()` for path construction, `os.path.exists()` for checks, `os.makedirs()` for directory creation, and `os.remove()` for file deletion. Do NOT use pathlib's `Path()` or `/` operator.
+
 ### Performance Considerations
 - **NumPy**: Use vectorized operations for pixel manipulation
 - **Threading**: Protect shared state with locks
 - **Caching**: Cache expensive computations
-- **Rust Extensions**: Use for CPU-intensive effects
 
 ### Error Handling
 - **Graceful Degradation**: Continue operation when devices fail
 - **Logging**: Comprehensive logging with appropriate levels
+  - Use `_LOGGER.warning()` for expected client errors (invalid requests, missing resources)
+  - Reserve `_LOGGER.error()` for actual system errors to avoid Sentry noise
+  - Follow pattern from `scenes.py` and `config.py` for API error handling
 - **Validation**: Validate all user inputs
 - **Recovery**: Attempt reconnection for network devices
 
@@ -150,8 +184,27 @@ Virtuals abstract physical LED hardware, allowing:
 - **Device Mocking**: Mock network devices for testing
 - **Configuration Validation**: Test schema validation
 - **API Testing**: Integration tests for REST endpoints
+- **Security Testing**: Use big-list-of-naughty-strings patterns for input validation
+
+### Security Testing Guidelines
+
+When testing input validation, especially for file paths and URLs, use patterns from the big-list-of-naughty-strings project to test:
+
+1. **Path Traversal**: `../`, encoded variants, null bytes, mixed separators
+2. **URL Injection**: Protocol injection, IP obfuscation, localhost variants
+3. **Special Filenames**: Reserved names (CON, PRN, NUL), control characters, homoglyphs
+4. **SSRF Protection**: Loopback addresses, private networks, metadata endpoints
 
 ## Common Tasks
+
+### Adding New API Endpoints
+1. Create new file in `ledfx/api/` with ONE `RestEndpoint` class per file
+2. Use `RestEndpoint` helper methods (`request_success`, `bare_request_success`, `invalid_request`)
+3. Never use `web.json_response()` directly
+4. Use `_LOGGER.warning()` for client errors, not `_LOGGER.error()` (avoid Sentry noise)
+5. Follow security patterns: path validation, input sanitization, content validation
+6. Write integration tests in `tests/test_api_*.py`
+7. Document in `docs/apis/*.md`
 
 ### Adding New Effects
 1. Create effect class inheriting from `Effect`
@@ -170,7 +223,7 @@ Virtuals abstract physical LED hardware, allowing:
 ### Performance Optimization
 - Profile with `cProfile` for CPU bottlenecks
 - Use `numpy` operations instead of Python loops
-- Consider Rust extensions for critical paths
+- Leverage vnoise for performance-critical noise generation
 - Cache expensive calculations
 - Optimize network transmission
 

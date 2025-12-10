@@ -16,10 +16,12 @@ Effects
    :maxdepth: 2
 
    matrix/concentric
+   matrix/digitalrain
    matrix/flame
    matrix/radial
    matrix/soap
    matrix/waterfall
+   matrix/number
 
 1d Strip
 --------
