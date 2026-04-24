@@ -255,7 +255,6 @@ async def test_post_scene_with_upsert():
 
     # Create initial scene
     request_data = {
-        "id": "my-scene",
         "name": "Original Scene",
         "virtuals": {"v1": {"action": "stop"}},
     }
@@ -268,12 +267,12 @@ async def test_post_scene_with_upsert():
         data = json.loads(response.body.decode())
 
         assert data["status"] == "success"
-        assert data["scene"]["id"] == "my-scene"
+        scene_id = data["scene"]["id"]
         assert data["scene"]["config"]["name"] == "Original Scene"
 
-        # Now upsert with same id
+        # Now upsert with same id and new name
         request_data_2 = {
-            "id": "my-scene",
+            "id": scene_id,
             "name": "Updated Scene",
             "virtuals": {"v1": {"action": "forceblack"}},
         }
@@ -283,11 +282,28 @@ async def test_post_scene_with_upsert():
         data = json.loads(response.body.decode())
 
         assert data["status"] == "success"
-        assert data["scene"]["id"] == "my-scene"
+        assert data["scene"]["id"] == scene_id
         assert data["scene"]["config"]["name"] == "Updated Scene"
         assert (
             data["scene"]["config"]["virtuals"]["v1"]["action"] == "forceblack"
         )
+
+        # Test upsert without name (name should remain unchanged)
+        request_data_3 = {
+            "id": scene_id,
+            "virtuals": {"v1": {"action": "ignore"}},
+        }
+
+        mock_request.json = AsyncMock(return_value=request_data_3)
+        response = await endpoint.post(mock_request)
+        data = json.loads(response.body.decode())
+
+        assert data["status"] == "success"
+        assert data["scene"]["id"] == scene_id
+        assert (
+            data["scene"]["config"]["name"] == "Updated Scene"
+        )  # Name preserved from previous update
+        assert data["scene"]["config"]["virtuals"]["v1"]["action"] == "ignore"
 
 
 @pytest.mark.asyncio
@@ -349,4 +365,5 @@ async def test_post_scene_warns_preset_without_type():
             warning_msg = mock_logger.warning.call_args[0][0]
             assert "preset" in warning_msg.lower()
             assert "type" in warning_msg.lower()
-            assert "v1" in warning_msg
+            warning_args = mock_logger.warning.call_args[0][1:]
+            assert "v1" in warning_args

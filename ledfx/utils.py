@@ -8,7 +8,6 @@ import io
 import ipaddress
 import logging
 import math
-import mimetypes
 import os
 import pkgutil
 import re
@@ -49,27 +48,25 @@ from dotenv import load_dotenv
 from ledfx.color import LEDFX_GRADIENTS
 from ledfx.config import save_config
 from ledfx.consts import LEDFX_ASSETS_PATH, PROJECT_VERSION
+from ledfx.events import ColorsUpdatedEvent
 from ledfx.libraries.cache import ImageCache
+from ledfx.utilities.security_utils import (
+    DOWNLOAD_TIMEOUT,
+    MAX_IMAGE_SIZE_BYTES,
+    build_browser_request,
+    is_allowed_image_extension,
+    resolve_safe_path_in_directory,
+    validate_image_mime_type,
+    validate_local_path,
+    validate_pil_image,
+    validate_url_safety,
+)
 
 # from asyncio import coroutines, ensure_future
 
-try:
-    from itertools import cycle
-
-    from bokeh.io import output_file, show
-    from bokeh.layouts import column
-    from bokeh.models import Label
-    from bokeh.palettes import Category10
-    from bokeh.plotting import figure
-
-    from ledfx.config import get_default_config_directory
-
-    bokeh_available = True
-except ImportError:
-    bokeh_available = False
-
 
 _LOGGER = logging.getLogger(__name__)
+
 
 # perf_counter has high resolution on all platforms better than 1 ms
 # however on windows until 3.11 sleep is using monotonic at a low resolution
@@ -142,7 +139,7 @@ def fps_to_sleep_interval(fps):
 
 
 def install_package(package):
-    _LOGGER.debug(f"Installed package: {package}")
+    _LOGGER.debug("Installing package: %s", package)
     env = os.environ.copy()
     args = [
         sys.executable,
@@ -161,13 +158,15 @@ def install_package(package):
             stderr.decode("utf-8").lstrip().strip(),
         )
         return False
+    _LOGGER.debug("Installed package: %s", package)
     return True
 
 
 def import_or_install(package):
     try:
-        _LOGGER.debug(f"Imported package: {package}")
-        return importlib.import_module(package)
+        module = importlib.import_module(package)
+        _LOGGER.debug("Imported package: %s", package)
+        return module
 
     except ImportError:
         install_package(package)
@@ -253,7 +252,7 @@ def check_if_ip_is_broadcast(thisip):
         return False
 
     except OSError as e:
-        _LOGGER.warning(f"Unable to check if ip is a broadcast address: {e}")
+        _LOGGER.warning("Unable to check if ip is a broadcast address: %s", e)
         return False
 
 
@@ -278,9 +277,9 @@ def async_fire_and_return(coro, callback, timeout=10):
         if exc:
             # Handle wonderful empty TimeoutError exception
             if isinstance(exc, TimeoutError):
-                _LOGGER.warning(f"Coroutine {future} timed out.")
+                _LOGGER.warning("Coroutine %s timed out.", future)
             else:
-                _LOGGER.error(exc)
+                _LOGGER.error("%s", exc)
         else:
             callback(future.result())
 
@@ -383,7 +382,7 @@ class WLED:
             config: dict, with all wled configuration info
         """
         _LOGGER.info(
-            f"WLED {self.ip_address}: Attempting to contact device..."
+            "WLED %s: Attempting to contact device...", self.ip_address
         )
         response = await WLED._wled_request(
             requests.get, self.ip_address, "json/info"
@@ -397,7 +396,9 @@ class WLED:
             )
 
         _LOGGER.info(
-            f"WLED compatible device brand:{wled_config['brand']} at {self.ip_address} configuration received"
+            "WLED compatible device brand:%s at %s configuration received",
+            wled_config["brand"],
+            self.ip_address,
         )
 
         return wled_config
@@ -408,14 +409,16 @@ class WLED:
         Returns:
             nodes: dict, with all wled nodes info
         """
-        _LOGGER.info(f"WLED {self.ip_address}: Attempting to get nodes...")
+        _LOGGER.info("WLED %s: Attempting to get nodes...", self.ip_address)
         response = await WLED._wled_request(
             requests.get, self.ip_address, "json/nodes"
         )
 
         wled_nodes = response.json()
 
-        _LOGGER.debug(f"WLED {self.ip_address}: Received config {wled_nodes}")
+        _LOGGER.debug(
+            "WLED %s: Received config %s", self.ip_address, wled_nodes
+        )
 
         return wled_nodes
 
@@ -468,7 +471,7 @@ class WLED:
         )
 
         _LOGGER.info(
-            f"WLED {self.ip_address}: Turned {'on' if state else 'off'}."
+            "WLED %s: Turned %s.", self.ip_address, "on" if state else "off"
         )
 
     async def set_brightness(self, brightness):
@@ -488,7 +491,7 @@ class WLED:
         )
 
         _LOGGER.info(
-            f"WLED {self.ip_address}: Set brightness to {brightness}."
+            "WLED %s: Set brightness to %s.", self.ip_address, brightness
         )
 
     def enable_realtime_gamma(self):
@@ -501,7 +504,7 @@ class WLED:
         self.sync_settings["if"]["live"]["no-gc"] = False
 
         _LOGGER.info(
-            f"WLED {self.ip_address}: Enabled realtime gamma correction"
+            "WLED %s: Enabled realtime gamma correction", self.ip_address
         )
 
     def force_max_brightness(self):
@@ -512,7 +515,7 @@ class WLED:
         """
         self.sync_settings["if"]["live"]["maxbri"] = True
 
-        _LOGGER.info(f"WLED {self.ip_address}: Enabled force max brightness")
+        _LOGGER.info("WLED %s: Enabled force max brightness", self.ip_address)
 
     def multirgb_dmx_mode(self):
         """
@@ -522,7 +525,7 @@ class WLED:
         """
         self.sync_settings["if"]["live"]["dmx"]["mode"] = 4
 
-        _LOGGER.info(f"WLED {self.ip_address}: Enabled Multi RGB")
+        _LOGGER.info("WLED %s: Enabled Multi RGB", self.ip_address)
 
     def first_universe(self):
         """
@@ -532,7 +535,7 @@ class WLED:
         """
         self.sync_settings["if"]["live"]["dmx"]["uni"] = 1
 
-        _LOGGER.info(f"WLED {self.ip_address}: Set first Universe = 1")
+        _LOGGER.info("WLED %s: Set first Universe = 1", self.ip_address)
 
     def first_dmx_address(self):
         """
@@ -542,7 +545,7 @@ class WLED:
         """
         self.sync_settings["if"]["live"]["dmx"]["addr"] = 1
 
-        _LOGGER.info(f"WLED {self.ip_address}: Set first DMX address = 1")
+        _LOGGER.info("WLED %s: Set first DMX address = 1", self.ip_address)
 
     def get_inactivity_timeout(self):
         """
@@ -566,7 +569,7 @@ class WLED:
         self.sync_settings["if"]["live"]["timeout"] = timeout * 10
 
         _LOGGER.info(
-            f"Set WLED device at {self.ip_address} timeout to {timeout}s"
+            "Set WLED device at %s timeout to %ss", self.ip_address, timeout
         )
 
     def set_sync_mode(self, mode):
@@ -598,7 +601,7 @@ class WLED:
         self.reboot_flag = True
 
         _LOGGER.info(
-            f"Set WLED device at {self.ip_address} to sync mode '{mode}'"
+            "Set WLED device at %s to sync mode '%s'", self.ip_address, mode
         )
 
     def get_sync_mode(self):
@@ -663,7 +666,7 @@ async def resolve_destination(
             dest = await loop.run_in_executor(
                 executor, socket.gethostbyname, cleaned_dest
             )
-            _LOGGER.debug(f"Resolved {cleaned_dest} to {dest}")
+            _LOGGER.debug("Resolved %s to %s", cleaned_dest, dest)
             return dest
             # dest = await loop.getaddrinfo(cleaned_dest, port)
             # return dest[0][4][0]
@@ -699,7 +702,7 @@ def read_ledfx_dotenv():
         path_to_load = os.path.join(parent_dir, "ledfx.env")
     if os.path.exists(path_to_load):
         load_dotenv(dotenv_path=path_to_load)
-        _LOGGER.debug(f"Loaded dotenv from {path_to_load}")
+        _LOGGER.debug("Loaded dotenv from %s", path_to_load)
 
 
 def currently_frozen():
@@ -731,7 +734,7 @@ def get_icon_path(icon_filename) -> str:
     )
 
     if not os.path.isfile(icon_location):
-        _LOGGER.error(f"No icon found at {icon_location}")
+        _LOGGER.error("No icon found at %s", icon_location)
 
     return icon_location
 
@@ -765,6 +768,30 @@ def generate_title(id):
 
     """
     return re.sub("[^a-zA-Z0-9]", " ", id).title()
+
+
+def is_gap_device(device) -> bool:
+    """
+    Check if a device is a fake gap device used for discontiguous mappings.
+
+    Gap devices are dummy placeholders created by the frontend's matrix editor
+    to represent empty/unused pixels in discontiguous layouts. They should be
+    skipped during rendering and device processing.
+
+    A device is considered a gap device if and only if:
+    1. The device ID starts with "gap-"
+    2. The device type is "dummy"
+
+    Args:
+        device: The device object to check. Can be None.
+
+    Returns:
+        bool: True if the device ID starts with "gap-" AND the device type
+              is "dummy", False otherwise (including when device is None).
+    """
+    if device is None:
+        return False
+    return device.id.startswith("gap-") and device.type == "dummy"
 
 
 def hasattr_explicit(cls, attr):
@@ -857,38 +884,44 @@ class UserDefaultCollection(MutableMapping):
         if val:
             return self._parser(val)
         raise KeyError(f"Unknown {self._collection_name}: {key}")
-        # _LOGGER.error(f"Unknown {self._collection_name}: {name}")
+        # _LOGGER.error("Unknown %s: %s", self._collection_name, name)
 
     def __delitem__(self, key):
         if key in self._default_vals:
             _LOGGER.error(
-                f"Cannot delete LedFx {self._collection_name}: {key}"
+                "Cannot delete LedFx %s: %s", self._collection_name, key
             )
             return
         if key in self._user_vals:
             del self._user_vals[key]
         _LOGGER.info(
-            f"Deleted {self._collection_name.lower().rstrip('s')}: {key}"
+            "Deleted %s: %s", self._collection_name.lower().rstrip("s"), key
         )
         save_config(
             config=self._ledfx.config,
             config_dir=self._ledfx.config_dir,
         )
+        # Fire event if colors or gradients were deleted
+        if self._collection_name in ("Colors", "Gradients"):
+            self._ledfx.events.fire_event(ColorsUpdatedEvent())
 
     def __setitem__(self, key, value):
         if key in self._default_vals:
             _LOGGER.error(
-                f"Cannot overwrite LedFx {self._collection_name}: {key}"
+                "Cannot overwrite LedFx %s: %s", self._collection_name, key
             )
             return
         self._user_vals[key] = self._validator(value)
         _LOGGER.info(
-            f"Saved {self._collection_name.lower().rstrip('s')}: {key}"
+            "Saved %s: %s", self._collection_name.lower().rstrip("s"), key
         )
         save_config(
             config=self._ledfx.config,
             config_dir=self._ledfx.config_dir,
         )
+        # Fire event if colors or gradients were updated
+        if self._collection_name in ("Colors", "Gradients"):
+            self._ledfx.events.fire_event(ColorsUpdatedEvent())
 
     def __iter__(self):
         return chain(self._default_vals, self._user_vals)
@@ -1063,7 +1096,7 @@ class RegistryLoader:
                     self.registry = registry
 
                 def on_modified(self, event):
-                    (_, extension) = os.path.splitext(event.src_path)
+                    _, extension = os.path.splitext(event.src_path)
                     if extension == ".py":
                         self.registry.reload()
 
@@ -1084,12 +1117,15 @@ class RegistryLoader:
         """
 
         found = self.discover_modules(package)
-        _LOGGER.debug(f"Importing {found} from {package}")
+        _LOGGER.debug("Importing %s modules from %s", len(found), package)
         for name in found:
             try:
                 importlib.import_module(name)
             except ModuleNotFoundError as e:
-                _LOGGER.warning(f"Failed to import {name} from {package}: {e}")
+                _LOGGER.warning(
+                    "Failed to import %s from %s: %s", name, package, e
+                )
+        _LOGGER.debug("Finished importing from %s", package)
 
     def discover_modules(self, package):
         """Discovers all modules in the package"""
@@ -1129,14 +1165,14 @@ class RegistryLoader:
                 module = importlib.import_module(name, path)
                 sys.modules[name] = module
             except SyntaxError as e:
-                _LOGGER.error(f"Failed to reload {name}: {e}")
+                _LOGGER.error("Failed to reload %s: %s", name, e)
         else:
             pass
 
     def reload(self, force=False):
         """Reloads the registry"""
         found = self.discover_modules(self._package)
-        _LOGGER.debug(f"Reloading {found} from {self._package}")
+        _LOGGER.debug("Reloading %s from %s", found, self._package)
         for name in found:
             self.reload_module(name)
 
@@ -1144,7 +1180,9 @@ class RegistryLoader:
         """Loads and creates an object from the registry by type. If type is missing, logs a warning and returns None instead of raising."""
         if type not in self._cls.registry():
             _LOGGER.warning(
-                f"Couldn't find '{type}' in the {self._cls.__name__.lower()} registry. Skipping creation."
+                "Couldn't find '%s' in the %s registry. Skipping creation.",
+                type,
+                self._cls.__name__.lower(),
             )
             return None
 
@@ -1293,22 +1331,73 @@ class Graph:
             jitter (bool): If true, will dump the jitter graph
             only_jitter (bool): If true, will only dump the jitter graph
         """
-        if not bokeh_available:
-            _LOGGER.info("Bokeh is disabled dump is disabled")
+        try:
+            from itertools import cycle
+
+            from bokeh.io import output_file, show
+            from bokeh.layouts import column
+            from bokeh.models import Label
+            from bokeh.palettes import Category10
+            from bokeh.plotting import figure
+
+            from ledfx.config import get_default_config_directory
+        except ImportError:
+            _LOGGER.info("Bokeh is not available, dump is disabled")
+            return
+
+        if sub_title:
+            compound = f"{self.title} : {sub_title}"
         else:
-            if sub_title:
-                compound = f"{self.title} : {sub_title}"
-            else:
-                compound = self.title
+            compound = self.title
 
-            _LOGGER.info(f"Attempting to dump graph {compound}")
-            TOOLS = "xpan,xwheel_zoom,box_zoom,reset,save,box_select"
-            colors = cycle(Category10[10])
+        _LOGGER.info("Attempting to dump graph %s", compound)
+        TOOLS = "xpan,xwheel_zoom,box_zoom,reset,save,box_select"
+        colors = cycle(Category10[10])
 
-            vals_fig = figure(
-                title=compound,
+        vals_fig = figure(
+            title=compound,
+            x_axis_label="sec since start",
+            y_axis_label=self.y_title,
+            tools=TOOLS,
+            active_scroll="xwheel_zoom",
+            width=1200,
+            height=600,
+        )
+
+        for a_range in self.ranges.values():
+            if len(a_range.list_x()) > 0:
+                vals_fig.line(
+                    a_range.list_x(),
+                    a_range.list_y(),
+                    legend_label=a_range.key,
+                    line_width=2,
+                    color=next(colors),
+                )
+
+        for tag in self.tags:
+            label = Label(
+                x=tag.x,
+                y=tag.y,
+                text=tag.text,
+                text_font_size="12pt",
+                text_color=tag.color,
+                angle=1.57,
+            )
+            vals_fig.add_layout(label)
+
+        if self.y_axis_max is not None:
+            vals_fig.y_range.end = self.y_axis_max
+
+        vals_fig.legend.click_policy = "hide"
+
+        if jitter or only_jitter:
+            jitter_title = f"{compound} jitter"
+
+            jitter_fig = figure(
+                title=jitter_title,
                 x_axis_label="sec since start",
-                y_axis_label=self.y_title,
+                x_range=vals_fig.x_range,
+                y_axis_label="periodic secs",
                 tools=TOOLS,
                 active_scroll="xwheel_zoom",
                 width=1200,
@@ -1316,89 +1405,49 @@ class Graph:
             )
 
             for a_range in self.ranges.values():
-                if len(a_range.list_x()) > 0:
-                    vals_fig.line(
+                # Calculte jitter for range x and prestuff so len is same
+                # don't use numpy due to some side effects
+                x = a_range.list_x()
+                if len(x) > 0:
+                    jitter = [x[i + 1] - x[i] for i in range(len(x) - 1)]
+                    jitter.insert(0, 0.0)
+                    jitter_fig.circle(
                         a_range.list_x(),
-                        a_range.list_y(),
+                        jitter,
                         legend_label=a_range.key,
-                        line_width=2,
+                        size=3,
                         color=next(colors),
                     )
 
             for tag in self.tags:
                 label = Label(
                     x=tag.x,
-                    y=tag.y,
+                    y=0.001,
                     text=tag.text,
                     text_font_size="12pt",
                     text_color=tag.color,
                     angle=1.57,
-                )
-                vals_fig.add_layout(label)
-
-            if self.y_axis_max is not None:
-                vals_fig.y_range.end = self.y_axis_max
-
-            vals_fig.legend.click_policy = "hide"
-
-            if jitter or only_jitter:
-                jitter_title = f"{compound} jitter"
-
-                jitter_fig = figure(
-                    title=jitter_title,
-                    x_axis_label="sec since start",
-                    x_range=vals_fig.x_range,
-                    y_axis_label="periodic secs",
-                    tools=TOOLS,
-                    active_scroll="xwheel_zoom",
-                    width=1200,
-                    height=600,
+                    text_baseline="middle",
                 )
 
-                for a_range in self.ranges.values():
-                    # Calculte jitter for range x and prestuff so len is same
-                    # don't use numpy due to some side effects
-                    x = a_range.list_x()
-                    if len(x) > 0:
-                        jitter = [x[i + 1] - x[i] for i in range(len(x) - 1)]
-                        jitter.insert(0, 0.0)
-                        jitter_fig.circle(
-                            a_range.list_x(),
-                            jitter,
-                            legend_label=a_range.key,
-                            size=3,
-                            color=next(colors),
-                        )
+                jitter_fig.add_layout(label)
 
-                for tag in self.tags:
-                    label = Label(
-                        x=tag.x,
-                        y=0.001,
-                        text=tag.text,
-                        text_font_size="12pt",
-                        text_color=tag.color,
-                        angle=1.57,
-                        text_baseline="middle",
-                    )
+            jitter_fig.legend.click_policy = "hide"
 
-                    jitter_fig.add_layout(label)
+        # work out layour according to requested graphs
+        if only_jitter:
+            p = column(jitter_fig)
+        elif jitter:
+            p = column(vals_fig, jitter_fig)
+        else:
+            p = column(vals_fig)
 
-                jitter_fig.legend.click_policy = "hide"
-
-            # work out layour according to requested graphs
-            if only_jitter:
-                p = column(jitter_fig)
-            elif jitter:
-                p = column(vals_fig, jitter_fig)
-            else:
-                p = column(vals_fig)
-
-            save_as = os.path.join(
-                get_default_config_directory(),
-                f"{re.sub('[^A-Za-z0-9]+', '_', compound)}.html",
-            )
-            output_file(filename=save_as, title=compound)
-            show(p)
+        save_as = os.path.join(
+            get_default_config_directory(),
+            f"{re.sub('[^A-Za-z0-9]+', '_', compound)}.html",
+        )
+        output_file(filename=save_as, title=compound)
+        show(p)
 
 
 def wled_support_DDP(build) -> bool:
@@ -1467,255 +1516,6 @@ def clip_at_limit(numbers, limit):
 # Image Security Validation Functions
 # =============================================================================
 
-# Constants for image security
-ALLOWED_IMAGE_EXTENSIONS = {
-    ".gif",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".webp",
-    ".bmp",
-    ".tiff",
-    ".tif",
-    ".ico",
-}
-
-ALLOWED_MIME_TYPES = {
-    "image/gif",
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/bmp",
-    "image/tiff",
-    "image/x-icon",
-}
-
-ALLOWED_PIL_FORMATS = {
-    "GIF",
-    "PNG",
-    "JPEG",
-    "WEBP",
-    "BMP",
-    "TIFF",
-    "ICO",
-    "PPM",
-    "PGM",
-    "PBM",
-}
-
-# Image size limits
-MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
-MAX_IMAGE_PIXELS = 4096 * 4096  # Prevent decompression bombs
-DOWNLOAD_TIMEOUT = 30  # seconds
-
-# Blocked IP ranges for SSRF protection
-BLOCKED_IP_NETWORKS = [
-    # IPv4 Loopback
-    ipaddress.ip_network("127.0.0.0/8"),
-    # IPv4 Private networks
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    # IPv4 Link-local
-    ipaddress.ip_network("169.254.0.0/16"),
-    # IPv4 Reserved ranges
-    ipaddress.ip_network("0.0.0.0/8"),
-    ipaddress.ip_network("240.0.0.0/4"),
-    # IPv4 Multicast
-    ipaddress.ip_network("224.0.0.0/4"),
-    # IPv6 Loopback
-    ipaddress.ip_network("::1/128"),
-    # IPv6 Unspecified
-    ipaddress.ip_network("::/128"),
-    # IPv6 Private/ULA
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fd00::/8"),
-    # IPv6 Link-local
-    ipaddress.ip_network("fe80::/10"),
-    # IPv6 Multicast
-    ipaddress.ip_network("ff00::/8"),
-]
-
-# Cloud metadata endpoints (commonly targeted in SSRF attacks)
-BLOCKED_HOSTNAMES = [
-    "169.254.169.254",  # AWS, Azure, GCP metadata
-    "metadata.google.internal",  # GCP
-    "169.254.170.2",  # AWS ECS metadata
-]
-
-
-def is_blocked_ip(ip_str: str) -> bool:
-    """
-    Check if an IP address is in the blocklist.
-
-    Args:
-        ip_str: IP address string to check
-
-    Returns:
-        bool: True if IP is blocked
-    """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        for network in BLOCKED_IP_NETWORKS:
-            if ip in network:
-                return True
-        return False
-    except ValueError:
-        # Invalid IP address
-        return True
-
-
-def validate_url_safety(url: str) -> tuple[bool, str]:
-    """
-    Validate URL for SSRF protection by checking scheme, hostname, and resolved IP.
-
-    Args:
-        url: URL to validate
-
-    Returns:
-        tuple: (is_safe, error_message)
-    """
-    try:
-        parsed = urllib.parse.urlparse(url)
-
-        # Only allow HTTP/HTTPS
-        if parsed.scheme not in ("http", "https"):
-            return False, f"Protocol '{parsed.scheme}' not allowed"
-
-        hostname = parsed.hostname
-        if not hostname:
-            return False, "No hostname found in URL"
-
-        # Check against blocked hostname list
-        if hostname.lower() in BLOCKED_HOSTNAMES:
-            return False, f"Hostname '{hostname}' is blocked"
-
-        # Resolve hostname to IP addresses
-        try:
-            addr_info = socket.getaddrinfo(
-                hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                socket.AF_UNSPEC,
-                socket.SOCK_STREAM,
-            )
-        except socket.gaierror as e:
-            return False, f"Failed to resolve hostname '{hostname}': {e}"
-
-        # Check all resolved IPs
-        for family, socktype, proto, canonname, sockaddr in addr_info:
-            ip_str = sockaddr[0]
-
-            # Check if IP is blocked
-            if is_blocked_ip(ip_str):
-                return False, f"URL resolves to blocked IP address: {ip_str}"
-
-        return True, ""
-
-    except Exception as e:
-        return False, f"URL validation error: {e}"
-
-
-def is_allowed_image_extension(path: str) -> bool:
-    """
-    Check if file extension is in allowlist.
-
-    Args:
-        path: File path or URL to check
-
-    Returns:
-        bool: True if extension is allowed
-    """
-    # Parse URL to remove query strings and fragments
-    parsed = urllib.parse.urlparse(path)
-
-    # Use parsed path component for URLs (http/https or if netloc is present)
-    if parsed.scheme in ("http", "https") or parsed.netloc:
-        path_to_check = parsed.path
-    else:
-        # Keep original path for local files
-        path_to_check = path
-
-    ext = os.path.splitext(path_to_check.lower())[1]
-    return ext in ALLOWED_IMAGE_EXTENSIONS
-
-
-def validate_image_mime_type(file_path: str) -> bool:
-    """
-    Validate file MIME type using multiple methods.
-
-    Args:
-        file_path: Path to file to validate (must be pre-validated by validate_local_path)
-
-    Returns:
-        bool: True if MIME type is allowed
-    """
-    try:
-        # Try to open with PIL to detect format from content
-        # lgtm[py/path-injection] - file_path is validated by validate_local_path before calling this function
-        with Image.open(file_path) as img:
-            # PIL format detection (more reliable than imghdr)
-            if img.format is None:
-                return False
-
-            # Check if PIL format is in allowed list
-            if img.format.upper() not in ALLOWED_PIL_FORMATS:
-                return False
-
-        # Additional MIME check using file extension
-        mime_type, _ = mimetypes.guess_type(file_path)
-        if mime_type and mime_type not in ALLOWED_MIME_TYPES:
-            return False
-
-        return True
-    except Exception:
-        return False
-
-
-def validate_pil_image(image: Image.Image) -> bool:
-    """
-    Validate PIL image format and dimensions.
-
-    Args:
-        image: PIL Image object
-
-    Returns:
-        bool: True if image format and size are allowed
-    """
-    # Check format
-    if image.format not in ALLOWED_PIL_FORMATS:
-        _LOGGER.warning(f"Rejected unsupported image format: {image.format}")
-        return False
-
-    # Check pixel dimensions (prevent decompression bombs)
-    if image.width * image.height > MAX_IMAGE_PIXELS:
-        _LOGGER.warning(
-            f"Image too large: {image.width}x{image.height} pixels "
-            f"(max {MAX_IMAGE_PIXELS})"
-        )
-        return False
-
-    return True
-
-
-def build_browser_request(url: str) -> urllib.request.Request:
-    """Minimal: add a desktop UA and same-origin Referer."""
-    parsed = urllib.parse.urlsplit(url)
-    origin = (
-        f"{parsed.scheme}://{parsed.netloc}/"
-        if parsed.scheme and parsed.netloc
-        else ""
-    )
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/141.0.0.0 Safari/537.36"
-        ),
-        "Referer": origin,  # helps with sites that block direct hotlinks (e.g., JSTOR)
-    }
-    return urllib.request.Request(url, headers=headers)
-
-
 # Global image cache instance and config directory
 _image_cache = None
 _config_dir = None
@@ -1737,7 +1537,7 @@ def init_image_cache(
     _config_dir = os.path.abspath(config_dir)
     _image_cache = ImageCache(config_dir, max_size_mb, max_items)
     _LOGGER.info(
-        f"Image cache initialized: max {max_size_mb}MB, {max_items} items"
+        "Image cache initialized: max %sMB, %s items", max_size_mb, max_items
     )
 
 
@@ -1746,9 +1546,9 @@ def get_image_cache():
     return _image_cache
 
 
-def validate_local_path(file_path: str) -> tuple[bool, str | None]:
+def validate_local_image_path(file_path: str) -> tuple[bool, str | None]:
     """
-    Validate that local file path is within allowed directories (path traversal protection).
+    Validate that local image file path is within allowed directories (path traversal protection).
 
     Allowed directories:
     - Config directory (user data)
@@ -1767,52 +1567,137 @@ def validate_local_path(file_path: str) -> tuple[bool, str | None]:
         )
         return False, None
 
+    # Delegate to centralized security function
+    return validate_local_path(file_path, [_config_dir, LEDFX_ASSETS_PATH])
+
+
+def _validate_and_open_image(
+    resolved_path: str, original_path: str, check_size: bool = True
+) -> Image.Image | None:
+    """
+    Validate and open an image file with security checks.
+
+    Args:
+        resolved_path: Absolute path to the image file
+        original_path: Original path for error messages
+        check_size: Whether to check file size limits
+
+    Returns:
+        PIL Image object or None if validation fails
+    """
+    # Check file exists
+    if not os.path.exists(resolved_path):
+        _LOGGER.warning("File not found: %s", original_path)
+        return None
+
+    if not os.path.isfile(resolved_path):
+        _LOGGER.warning("Path is not a file: %s", original_path)
+        return None
+
+    # Validate extension
+    if not is_allowed_image_extension(resolved_path):
+        _LOGGER.warning("Invalid image extension: %s", original_path)
+        return None
+
+    # Check file size
+    if check_size:
+        file_size = os.path.getsize(resolved_path)
+        if file_size > MAX_IMAGE_SIZE_BYTES:
+            _LOGGER.warning(
+                "File too large: %s bytes (max %s)",
+                file_size,
+                MAX_IMAGE_SIZE_BYTES,
+            )
+            return None
+
+    # Validate MIME type
+    if not validate_image_mime_type(resolved_path):
+        _LOGGER.warning("Invalid image MIME type: %s", original_path)
+        return None
+
+    # Open the image
     try:
-        # Resolve to absolute path and normalize
-        abs_path = os.path.abspath(os.path.realpath(file_path))
-        abs_config = os.path.abspath(os.path.realpath(_config_dir))
-        abs_assets = os.path.abspath(os.path.realpath(LEDFX_ASSETS_PATH))
+        gif = Image.open(resolved_path)
+    except Exception as e:
+        _LOGGER.warning("Failed to open image: %s : %s", original_path, e)
+        return None
 
-        # Check if file is within config directory tree
-        try:
-            common_config = os.path.commonpath([abs_path, abs_config])
-            if common_config == abs_config:
-                return True, abs_path
-        except ValueError:
-            pass  # Different drives on Windows, continue to check assets
+    # Validate PIL format and dimensions
+    if not validate_pil_image(gif):
+        _LOGGER.warning("Invalid PIL format or dimensions: %s", original_path)
+        return None
 
-        # Check if file is within assets directory tree
-        try:
-            common_assets = os.path.commonpath([abs_path, abs_assets])
-            if common_assets == abs_assets:
-                return True, abs_path
-        except ValueError:
-            pass  # Different drives on Windows
+    # Protect against single frame image like png, jpg
+    if not hasattr(gif, "n_frames"):
+        gif.n_frames = 1
 
-        _LOGGER.warning(
-            f"Path traversal attempt blocked: {file_path} is outside allowed directories"
-        )
-        return False, None
-
-    except (ValueError, OSError) as e:
-        _LOGGER.warning(f"Invalid path rejected: {file_path} : {e}")
-        return False, None
+    return gif
 
 
-def open_gif(gif_path, force_refresh=False):
+def open_gif(gif_path, force_refresh=False, config_dir=None):
     """
     Open a GIF image from a URL or local file path with file type validation.
 
+    Supports:
+    - URLs: http://, https:// (with caching)
+    - Built-in assets: builtin://path (from LEDFX_ASSETS_PATH/gifs/)
+    - Legacy built-in: ./ledfx_assets/gifs/path or ledfx_assets/gifs/path (converted to builtin://)
+    - User assets: plain paths like "my_animation.gif" (from config_dir/assets/) - requires config_dir
+    - Legacy: absolute/relative local file paths (validated within config directory)
+
     Args:
-        gif_path: URL or local file path to the GIF
+        gif_path: URL, builtin://path, or plain filename/path to the image
         force_refresh: Force download from URL, bypassing cache (default False)
+        config_dir: LedFx config directory (required for user assets and local paths)
 
     Returns:
         PIL Image object or None if failed
+
+    Examples:
+        "https://example.com/image.gif" -> Downloads and caches
+        "builtin://skull.gif" -> Built-in asset from LEDFX_ASSETS_PATH/gifs/
+        "builtin://pixelart/dj_bird.gif" -> Nested built-in asset
+        "./ledfx_assets/gifs/skull.gif" -> Legacy format, converted to builtin://skull.gif
+        "my_animation.gif" -> User asset from config_dir/assets/my_animation.gif (when config_dir provided)
+        "subfolder/animation.gif" -> User asset from config_dir/assets/subfolder/animation.gif
     """
     gif_path = gif_path.strip()
 
     try:
+        # Handle legacy ledfx_assets paths (e.g., "./ledfx_assets/gifs/skull.gif")
+        # Convert to builtin:// format for consistent handling
+        if gif_path.startswith("./ledfx_assets/gifs/"):
+            # Strip "./ledfx_assets/gifs/" prefix, keep filename
+            actual_path = gif_path[20:]  # Remove "./ledfx_assets/gifs/"
+            gif_path = f"builtin://{actual_path}"
+        elif gif_path.startswith("ledfx_assets/gifs/"):
+            # Strip "ledfx_assets/gifs/" prefix, keep filename
+            actual_path = gif_path[18:]  # Remove "ledfx_assets/gifs/"
+            gif_path = f"builtin://{actual_path}"
+
+        # Handle builtin:// prefix
+        if gif_path.startswith("builtin://"):
+            actual_path = gif_path[10:]  # Remove "builtin://" prefix
+            gifs_root = os.path.join(LEDFX_ASSETS_PATH, "gifs")
+
+            # Resolve and validate path
+            is_valid, resolved_path, error = resolve_safe_path_in_directory(
+                gifs_root,
+                actual_path,
+                create_dirs=False,
+                directory_name="built-in assets",
+            )
+            if not is_valid:
+                _LOGGER.warning(
+                    "Built-in asset path validation failed: %s", error
+                )
+                return None
+
+            # Validate and open the image
+            return _validate_and_open_image(
+                resolved_path, gif_path, check_size=False
+            )
+
         if gif_path.startswith(("http://", "https://")):
             # Check cache first (unless force_refresh)
             if _image_cache and not force_refresh:
@@ -1828,27 +1713,32 @@ def open_gif(gif_path, force_refresh=False):
                             return gif
                         else:
                             _LOGGER.warning(
-                                f"Cached GIF failed validation, re-downloading: {gif_path}"
+                                "Cached GIF failed validation, re-downloading: %s",
+                                gif_path,
                             )
                             # Delete corrupt cache entry and fall through to download
                             _image_cache.delete(gif_path)
                     except Exception as e:
                         _LOGGER.warning(
-                            f"Error reading cached GIF, re-downloading: {gif_path} : {e}"
+                            "Error reading cached GIF, re-downloading: %s : %s",
+                            gif_path,
+                            e,
                         )
                         # Delete corrupt cache entry and fall through to download
                         _image_cache.delete(gif_path)
 
             # Validate extension
             if not is_allowed_image_extension(gif_path):
-                _LOGGER.error(f"URL has invalid image extension: {gif_path}")
+                _LOGGER.warning(
+                    "URL has invalid image extension: %s", gif_path
+                )
                 return None
 
             # Validate URL safety (SSRF protection)
             is_safe, error_msg = validate_url_safety(gif_path)
             if not is_safe:
-                _LOGGER.error(
-                    f"URL blocked for security: {gif_path} - {error_msg}"
+                _LOGGER.warning(
+                    "URL blocked for security: %s - %s", gif_path, error_msg
                 )
                 return None
 
@@ -1863,15 +1753,19 @@ def open_gif(gif_path, force_refresh=False):
                     content_length
                     and int(content_length) > MAX_IMAGE_SIZE_BYTES
                 ):
-                    _LOGGER.error(
-                        f"Image too large: {content_length} bytes (max {MAX_IMAGE_SIZE_BYTES})"
+                    _LOGGER.warning(
+                        "Image too large: %s bytes (max %s)",
+                        content_length,
+                        MAX_IMAGE_SIZE_BYTES,
                     )
                     return None
 
                 # Read with limit
                 data = response.read(MAX_IMAGE_SIZE_BYTES + 1)
                 if len(data) > MAX_IMAGE_SIZE_BYTES:
-                    _LOGGER.error("Image exceeded size limit during download")
+                    _LOGGER.warning(
+                        "Image exceeded size limit during download"
+                    )
                     return None
 
                 # Get headers for caching
@@ -1887,100 +1781,140 @@ def open_gif(gif_path, force_refresh=False):
 
                 # Validate PIL format and dimensions
                 if not validate_pil_image(gif):
-                    _LOGGER.error(
-                        f"Invalid PIL format or dimensions: {gif_path}"
+                    _LOGGER.warning(
+                        "Invalid PIL format or dimensions: %s", gif_path
                     )
                     return None
+
+                # Protect against single frame image like png, jpg
+                if not hasattr(gif, "n_frames"):
+                    gif.n_frames = 1
 
                 # Cache the downloaded image
                 if _image_cache:
                     _image_cache.put(
                         gif_path, data, content_type, etag, last_modified
                     )
+
+                return gif
         else:
-            # Local file
+            # Local file or user asset
             # Reject any URL schemes (file://, ftp://, etc.)
-            # Note: http/https are handled in the if branch above
+            # Note: http/https and builtin:// are handled in the if branches above
             parsed = urllib.parse.urlparse(gif_path)
             # Allow single-letter schemes (Windows drive letters like C:)
             if parsed.scheme and len(parsed.scheme) > 1:
-                _LOGGER.error(
-                    f"Invalid URL scheme '{parsed.scheme}' for local file: {gif_path}"
+                _LOGGER.warning(
+                    "Invalid URL scheme '%s' for local file: %s",
+                    parsed.scheme,
+                    gif_path,
                 )
                 return None
 
-            # Path traversal protection
-            is_valid, validated_path = validate_local_path(gif_path)
-            if not is_valid:
-                _LOGGER.error(
-                    f"Path traversal blocked or path outside config directory: {gif_path}"
+            # If config_dir is provided and path is relative, treat as user asset
+            if config_dir and not os.path.isabs(gif_path):
+                # User asset - resolve to config_dir/assets/
+                assets_root = os.path.join(config_dir, "assets")
+
+                # Resolve and validate path
+                is_valid, resolved_path, error = (
+                    resolve_safe_path_in_directory(
+                        assets_root,
+                        gif_path,
+                        create_dirs=False,
+                        directory_name="user assets",
+                    )
                 )
-                return None
+                if not is_valid:
+                    _LOGGER.warning(
+                        "User asset path validation failed: %s", error
+                    )
+                    return None
 
-            # Use validated path for all subsequent operations
-            # Validate extension
-            if not is_allowed_image_extension(validated_path):
-                _LOGGER.error(f"File has invalid image extension: {gif_path}")
-                return None
-
-            # Check file exists and get size
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            if not os.path.exists(validated_path):
-                _LOGGER.error(f"File not found: {gif_path}")
-                return None
-
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            file_size = os.path.getsize(validated_path)
-            if file_size > MAX_IMAGE_SIZE_BYTES:
-                _LOGGER.error(
-                    f"File too large: {file_size} bytes (max {MAX_IMAGE_SIZE_BYTES})"
+                # Validate and open the image
+                gif = _validate_and_open_image(
+                    resolved_path, gif_path, check_size=True
                 )
-                return None
+                return gif if gif else None
+            else:
+                # Legacy: absolute path or no config_dir - use existing validation
+                is_valid, validated_path = validate_local_image_path(gif_path)
+                if not is_valid:
+                    _LOGGER.warning(
+                        "Path traversal blocked or path outside config directory: %s",
+                        gif_path,
+                    )
+                    return None
 
-            # Validate MIME type
-            if not validate_image_mime_type(validated_path):
-                _LOGGER.error(f"Invalid image MIME type: {gif_path}")
-                return None
-
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            gif = Image.open(validated_path)
-
-            # Validate PIL format and dimensions
-            if not validate_pil_image(gif):
-                _LOGGER.error(f"Invalid PIL format or dimensions: {gif_path}")
-                return None
-
-        # protect against single frame image like png, jpg
-        if not hasattr(gif, "n_frames"):
-            gif.n_frames = 1
-
-        return gif
+                # Validate and open the image
+                gif = _validate_and_open_image(
+                    validated_path, gif_path, check_size=True
+                )
+                return gif if gif else None
 
     except urllib.error.HTTPError as e:
-        _LOGGER.warning(f"HTTP error fetching {gif_path}: {e.code} {e.reason}")
+        _LOGGER.warning(
+            "HTTP error fetching %s: %s %s", gif_path, e.code, e.reason
+        )
         return None
     except urllib.error.URLError as e:
-        _LOGGER.warning(f"URL error fetching {gif_path}: {e.reason}")
+        _LOGGER.warning("URL error fetching %s: %s", gif_path, e.reason)
         return None
     except Exception as e:
-        _LOGGER.warning(f"Failed to open gif: {gif_path} : {e}")
+        _LOGGER.warning("Failed to open gif: %s : %s", gif_path, e)
         return None
 
 
-def open_image(image_path, force_refresh=False):
+def open_image(image_path, force_refresh=False, config_dir=None):
     """
     Open an image from a URL or local file path with file type validation.
 
+    Supports:
+    - URLs: http://, https:// (with caching)
+    - Built-in assets: builtin://path (from LEDFX_ASSETS_PATH/test_images/)
+    - User assets: plain paths like "my_image.png" (from config_dir/assets/) - requires config_dir
+    - Legacy: absolute/relative local file paths (validated within config directory)
+
     Args:
-        image_path: URL or local file path to the image
+        image_path: URL, builtin://path, or plain filename/path to the image
         force_refresh: Force download from URL, bypassing cache (default False)
+        config_dir: LedFx config directory (required for user assets and local paths)
 
     Returns:
         PIL Image object or None if failed
+
+    Examples:
+        "https://example.com/image.png" -> Downloads and caches
+        "builtin://pattern.png" -> Built-in asset from LEDFX_ASSETS_PATH/test_images/
+        "my_image.png" -> User asset from config_dir/assets/my_image.png (when config_dir provided)
+        "subfolder/image.png" -> User asset from config_dir/assets/subfolder/image.png
     """
     image_path = image_path.strip()
 
     try:
+        # Handle builtin:// prefix
+        if image_path.startswith("builtin://"):
+            actual_path = image_path[10:]  # Remove "builtin://" prefix
+            images_root = os.path.join(LEDFX_ASSETS_PATH, "test_images")
+
+            # Resolve and validate path
+            is_valid, resolved_path, error = resolve_safe_path_in_directory(
+                images_root,
+                actual_path,
+                create_dirs=False,
+                directory_name="built-in images",
+            )
+            if not is_valid:
+                _LOGGER.warning(
+                    "Built-in image path validation failed: %s", error
+                )
+                return None
+
+            # Validate and open the image
+            return _validate_and_open_image(
+                resolved_path, image_path, check_size=False
+            )
+
         if image_path.startswith(("http://", "https://")):
             # Check cache first (unless force_refresh)
             if _image_cache and not force_refresh:
@@ -1993,27 +1927,32 @@ def open_image(image_path, force_refresh=False):
                             return image
                         else:
                             _LOGGER.warning(
-                                f"Cached image failed validation, re-downloading: {image_path}"
+                                "Cached image failed validation, re-downloading: %s",
+                                image_path,
                             )
                             # Delete corrupt cache entry and fall through to download
                             _image_cache.delete(image_path)
                     except Exception as e:
                         _LOGGER.warning(
-                            f"Error reading cached image, re-downloading: {image_path} : {e}"
+                            "Error reading cached image, re-downloading: %s : %s",
+                            image_path,
+                            e,
                         )
                         # Delete corrupt cache entry and fall through to download
                         _image_cache.delete(image_path)
 
             # Validate extension
             if not is_allowed_image_extension(image_path):
-                _LOGGER.error(f"URL has invalid image extension: {image_path}")
+                _LOGGER.warning(
+                    "URL has invalid image extension: %s", image_path
+                )
                 return None
 
             # Validate URL safety (SSRF protection)
             is_safe, error_msg = validate_url_safety(image_path)
             if not is_safe:
-                _LOGGER.error(
-                    f"URL blocked for security: {image_path} - {error_msg}"
+                _LOGGER.warning(
+                    "URL blocked for security: %s - %s", image_path, error_msg
                 )
                 return None
 
@@ -2028,15 +1967,19 @@ def open_image(image_path, force_refresh=False):
                     content_length
                     and int(content_length) > MAX_IMAGE_SIZE_BYTES
                 ):
-                    _LOGGER.error(
-                        f"Image too large: {content_length} bytes (max {MAX_IMAGE_SIZE_BYTES})"
+                    _LOGGER.warning(
+                        "Image too large: %s bytes (max %s)",
+                        content_length,
+                        MAX_IMAGE_SIZE_BYTES,
                     )
                     return None
 
                 # Read with limit
                 data = response.read(MAX_IMAGE_SIZE_BYTES + 1)
                 if len(data) > MAX_IMAGE_SIZE_BYTES:
-                    _LOGGER.error("Image exceeded size limit during download")
+                    _LOGGER.warning(
+                        "Image exceeded size limit during download"
+                    )
                     return None
 
                 # Get headers for caching
@@ -2052,8 +1995,8 @@ def open_image(image_path, force_refresh=False):
 
                 # Validate PIL format and dimensions
                 if not validate_pil_image(image):
-                    _LOGGER.error(
-                        f"Invalid PIL format or dimensions: {image_path}"
+                    _LOGGER.warning(
+                        "Invalid PIL format or dimensions: %s", image_path
                     )
                     return None
 
@@ -2065,74 +2008,72 @@ def open_image(image_path, force_refresh=False):
 
                 return image
         else:
-            # Local file
+            # Local file or user asset
             # Reject any URL schemes (file://, ftp://, etc.)
-            # Note: http/https are handled in the if branch above
+            # Note: http/https and builtin:// are handled in the if branches above
             parsed = urllib.parse.urlparse(image_path)
             # Allow single-letter schemes (Windows drive letters like C:)
             if parsed.scheme and len(parsed.scheme) > 1:
-                _LOGGER.error(
-                    f"Invalid URL scheme '{parsed.scheme}' for local file: {image_path}"
+                _LOGGER.warning(
+                    "Invalid URL scheme '%s' for local file: %s",
+                    parsed.scheme,
+                    image_path,
                 )
                 return None
 
-            # Path traversal protection
-            is_valid, validated_path = validate_local_path(image_path)
-            if not is_valid:
-                _LOGGER.error(
-                    f"Path traversal blocked or path outside config directory: {image_path}"
+            # If config_dir is provided and path is relative, treat as user asset
+            if config_dir and not os.path.isabs(image_path):
+                # User asset - resolve to config_dir/assets/
+                assets_root = os.path.join(config_dir, "assets")
+
+                # Resolve and validate path
+                is_valid, resolved_path, error = (
+                    resolve_safe_path_in_directory(
+                        assets_root,
+                        image_path,
+                        create_dirs=False,
+                        directory_name="user assets",
+                    )
                 )
-                return None
+                if not is_valid:
+                    _LOGGER.warning(
+                        "User asset path validation failed: %s", error
+                    )
+                    return None
 
-            # Use validated path for all subsequent operations
-            # Validate extension
-            if not is_allowed_image_extension(validated_path):
-                _LOGGER.error(
-                    f"File has invalid image extension: {image_path}"
+                # Validate and open the image
+                image = _validate_and_open_image(
+                    resolved_path, image_path, check_size=True
                 )
-                return None
-
-            # Check file exists and get size
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            if not os.path.exists(validated_path):
-                _LOGGER.error(f"File not found: {image_path}")
-                return None
-
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            file_size = os.path.getsize(validated_path)
-            if file_size > MAX_IMAGE_SIZE_BYTES:
-                _LOGGER.error(
-                    f"File too large: {file_size} bytes (max {MAX_IMAGE_SIZE_BYTES})"
+                return image if image else None
+            else:
+                # Legacy: absolute path or no config_dir - use existing validation
+                is_valid, validated_path = validate_local_image_path(
+                    image_path
                 )
-                return None
+                if not is_valid:
+                    _LOGGER.warning(
+                        "Path traversal blocked or path outside config directory: %s",
+                        image_path,
+                    )
+                    return None
 
-            # Validate MIME type
-            if not validate_image_mime_type(validated_path):
-                _LOGGER.error(f"Invalid image MIME type: {image_path}")
-                return None
-
-            # lgtm[py/path-injection] - validated_path is sanitized by validate_local_path
-            image = Image.open(validated_path)
-
-            # Validate PIL format and dimensions
-            if not validate_pil_image(image):
-                _LOGGER.error(
-                    f"Invalid PIL format or dimensions: {image_path}"
+                # Validate and open the image
+                image = _validate_and_open_image(
+                    validated_path, image_path, check_size=True
                 )
-                return None
-
-            return image
+                return image if image else None
 
     except urllib.error.HTTPError as e:
         _LOGGER.warning(
-            f"HTTP error fetching {image_path}: {e.code} {e.reason}"
+            "HTTP error fetching %s: %s %s", image_path, e.code, e.reason
         )
         return None
     except urllib.error.URLError as e:
-        _LOGGER.warning(f"URL error fetching {image_path}: {e.reason}")
+        _LOGGER.warning("URL error fetching %s: %s", image_path, e.reason)
         return None
     except Exception as e:
-        _LOGGER.warning(f"Failed to open image: {image_path} : {e}")
+        _LOGGER.warning("Failed to open image: %s : %s", image_path, e)
         return None
 
 
@@ -2176,7 +2117,7 @@ def get_font(font_list, size):
     for font_name in font_list:
         try:
             font = ImageFont.truetype(font_name, size)
-            _LOGGER.info(f"Found font: {font_name}")
+            _LOGGER.info("Found font: %s", font_name)
             return font
         except OSError:
             continue
@@ -2249,15 +2190,18 @@ def generate_defaults(ledfx_presets, ledfx_effects, effect_id):
 
 
 def log_packages():
-    _LOGGER.debug(f"{system()} : {release()} : {processor()}")
+    _LOGGER.debug("%s : %s : %s", system(), release(), processor())
     _LOGGER.debug(
-        f"{python_version()} : {python_build()} : {python_implementation()}"
+        "%s : %s : %s",
+        python_version(),
+        python_build(),
+        python_implementation(),
     )
     _LOGGER.debug("Packages")
     dists = list(metadata.distributions())
     dists.sort(key=lambda x: x.metadata["name"])
     for dist in dists:
-        _LOGGER.debug(f"{dist.metadata['name']} : {dist.version}")
+        _LOGGER.debug("%s : %s", dist.metadata["name"], dist.version)
 
 
 def is_package_installed(package_name: str, import_name: str = None) -> bool:
@@ -2276,8 +2220,10 @@ def is_package_installed(package_name: str, import_name: str = None) -> bool:
     # Try to get import spec
     spec = importlib.util.find_spec(import_name)
     if spec is None:
-        _LOGGER.info(
-            f"Optional dependency '{package_name}' not found (import name: '{import_name}')."
+        _LOGGER.debug(
+            "Optional dependency '%s' not found (import name: '%s').",
+            package_name,
+            import_name,
         )
         return False
 
@@ -2289,9 +2235,11 @@ def is_package_installed(package_name: str, import_name: str = None) -> bool:
 
     path = spec.origin or "unknown"
 
-    _LOGGER.info(f"Optional dependency '{package_name}' is installed:")
-    _LOGGER.info(f"  ├── Version: {version}")
-    _LOGGER.info(f"  └── Path:    {path}")
+    _LOGGER.debug(
+        "Optional dependency '%s' is installed (version: %s)",
+        package_name,
+        version,
+    )
     return True
 
 
@@ -2465,7 +2413,7 @@ class UpdateChecker:
             UpdateChecker._release_url = data["html_url"]
             UpdateChecker._update_check_succeeded = True
         except requests.RequestException as e:
-            _LOGGER.info(f"Failed to check for updates: {e}")
+            _LOGGER.info("Failed to check for updates: %s", e)
             UpdateChecker._update_check_succeeded = False
             return False
 
@@ -2657,7 +2605,7 @@ class Teleplot:
         try:
             Teleplot.sock.sendto(string.encode(), ("127.0.0.1", 47269))
         except Exception as e:
-            _LOGGER.error(f"Failed to send data to teleplot: {e}")
+            _LOGGER.error("Failed to send data to teleplot: %s", e)
 
 
 def aggressive_top_end_bias(x, boost):
@@ -2713,25 +2661,29 @@ def get_sorted_physical_ips() -> list[str]:
             "bridge",  # macOS
         ]
 
-        _LOGGER.info("Starting local IP discovery")
+        _LOGGER.debug("Starting local IP discovery")
 
         stats = psutil.net_if_stats()
         counters = psutil.net_io_counters(pernic=True)
 
         for iface_name, iface_addrs in psutil.net_if_addrs().items():
             if not any(keyword in iface_name for keyword in physical_keywords):
-                _LOGGER.info(f"Skipping non-physical interface: {iface_name}")
+                _LOGGER.debug(
+                    "Skipping non-physical interface: %s", iface_name
+                )
                 continue
             if iface_name not in stats or not stats[iface_name].isup:
-                _LOGGER.info(f"Skipping inactive interface: {iface_name}")
+                _LOGGER.debug("Skipping inactive interface: %s", iface_name)
                 continue
 
-            _LOGGER.info(f"Inspecting interface: {iface_name}")
+            _LOGGER.debug("Inspecting interface: %s", iface_name)
             for addr in iface_addrs:
                 if addr.family == socket.AF_INET:
                     if addr.address.startswith("127."):
-                        _LOGGER.info(
-                            f"Skipping loopback address on {iface_name}: {addr.address}"
+                        _LOGGER.debug(
+                            "Skipping loopback address on %s: %s",
+                            iface_name,
+                            addr.address,
                         )
                         continue
                     counter = counters.get(iface_name)
@@ -2740,12 +2692,15 @@ def get_sorted_physical_ips() -> list[str]:
                         if counter
                         else 0
                     )
-                    _LOGGER.info(
-                        f"Discovered IP {addr.address} on {iface_name} with usage {usage}"
+                    _LOGGER.debug(
+                        "Discovered IP %s on %s with usage %s",
+                        addr.address,
+                        iface_name,
+                        usage,
                     )
                     ip_usage_list.append((usage, addr.address))
     except Exception as e:
-        _LOGGER.warning(f"Failed to get network interface info: {e}")
+        _LOGGER.warning("Failed to get network interface info: %s", e)
         primary_ip = get_primary_ip()
         if primary_ip:
             return [primary_ip]
@@ -2766,7 +2721,7 @@ def get_sorted_physical_ips() -> list[str]:
             sorted_ips.remove(primary_ip)
         sorted_ips.insert(0, primary_ip)
 
-    _LOGGER.info(f"Final sorted IP list: {sorted_ips}")
+    _LOGGER.info("Final sorted IP list: %s", sorted_ips)
     return sorted_ips
 
 
@@ -2783,10 +2738,10 @@ def get_primary_ip() -> str:
         )  # Doesn't send packets; just gets routing info
         ip = s.getsockname()[0]
         s.close()
-        _LOGGER.info(f"Primary outbound IP detected: {ip}")
+        _LOGGER.debug("Primary outbound IP detected: %s", ip)
         return ip
     except Exception as e:
-        _LOGGER.warning(f"Primary IP detection via socket failed: {e}")
+        _LOGGER.warning("Primary IP detection via socket failed: %s", e)
         return None  # no fallback
 
 

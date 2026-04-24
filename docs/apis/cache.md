@@ -58,7 +58,12 @@ Get current cache statistics including all cached entries.
       "last_accessed": "2024-01-20T14:20:00Z",
       "access_count": 42,
       "file_size": 524288,
-      "content_type": "image/gif"
+      "content_type": "image/gif",
+      "width": 500,
+      "height": 500,
+      "format": "GIF",
+      "n_frames": 24,
+      "is_animated": true
     }
   ]
 }
@@ -75,6 +80,19 @@ Get current cache statistics including all cached entries.
 }
 ```
 
+**Entry Fields:**
+- `url`: Remote URL of cached image
+- `cached_at`: ISO 8601 timestamp when image was first cached
+- `last_accessed`: ISO 8601 timestamp of most recent access
+- `access_count`: Number of times image has been accessed
+- `file_size`: Size of cached file in bytes
+- `content_type`: MIME type (e.g., "image/gif", "image/png")
+- `width`: Image width in pixels
+- `height`: Image height in pixels
+- `format`: Image format string ("PNG", "JPEG", "GIF", "WEBP", etc.)
+- `n_frames`: Number of frames (1 for static images, >1 for animations)
+- `is_animated`: Boolean indicating if image has multiple frames
+
 **Entries sorted by:** `access_count` (descending) - most frequently used first
 
 ---
@@ -87,56 +105,45 @@ Clear specific URL from cache or clear entire cache.
 
 **Query Parameters:**
 - `url` (optional): Specific URL to clear
+- `all_variants` (optional, default: false): If "true" and url provided, clears all cache entries for that URL (including thumbnails with different params)
 
 **Examples:**
 
 Clear specific URL:
-```
+```bash
 DELETE /api/cache/images?url=https://example.com/image.gif
 ```
 
-Clear entire cache:
+Clear all thumbnail variants for an asset:
+```bash
+DELETE /api/cache/images?url=asset://backgrounds/galaxy.jpg&all_variants=true
 ```
+
+Clear entire cache:
+```bash
 DELETE /api/cache/images
 ```
 
 **Success Response (specific URL):**
 ```json
 {
-  "status": "success",
-  "payload": {
-    "type": "success",
-    "reason": "Cleared cache for URL: https://example.com/image.gif"
-  },
-  "data": {
-    "cleared_count": 1
-  }
+  "deleted": true,
+  "cleared_count": 1
+}
+```
+
+**Success Response (all variants):**
+```json
+{
+  "cleared_count": 3
 }
 ```
 
 **Success Response (entire cache):**
 ```json
 {
-  "status": "success",
-  "payload": {
-    "type": "success",
-    "reason": "Entire cache cleared"
-  },
-  "data": {
-    "cleared_count": 45,
-    "freed_bytes": 52428800
-  }
-}
-```
-
-**Error Response (URL not found):**
-```json
-{
-  "status": "failed",
-  "payload": {
-    "type": "warning",
-    "reason": "URL not found in cache: https://example.com/notfound.gif"
-  }
+  "cleared_count": 45,
+  "freed_bytes": 52428800
 }
 ```
 
@@ -153,38 +160,38 @@ This endpoint removes the specified URL from the cache. The next time the image 
 **Request Body:**
 ```json
 {
-  "url": "https://example.com/image.gif"
+  "url": "https://example.com/image.gif",
+  "all_variants": false
 }
 ```
 
 **Parameters:**
-- `url` (required): The URL to clear from cache
+- `url` (required): The URL to refresh in cache
+- `all_variants` (optional, default: false): If true, clears all cached entries for this URL (useful for clearing all thumbnail size/dimension variations of an asset)
 
-**Success Response (entry was in cache):**
+**Behavior:**
+- For `http://` or `https://` URLs: Actively refreshes by deleting the cached entry and immediately re-downloading from the origin server
+- For `asset://` URLs (local assets): Clears the cache entry only (no re-download)
+- With `all_variants=true`: Clears all cached variants without re-downloading
+
+**Success Response (single entry refreshed):**
 ```json
 {
-  "status": "success",
-  "payload": {
-    "type": "success",
-    "reason": "Cache entry cleared. Image will be re-downloaded on next access."
-  },
-  "data": {
-    "url": "https://example.com/image.gif"
-  }
+  "refreshed": true
 }
 ```
 
-**Success Response (entry was not in cache):**
+**Success Response (single entry not in cache):**
 ```json
 {
-  "status": "success",
-  "payload": {
-    "type": "info",
-    "reason": "URL was not in cache (no action needed)."
-  },
-  "data": {
-    "url": "https://example.com/image.gif"
-  }
+  "refreshed": false
+}
+```
+
+**Success Response (all_variants=true):**
+```json
+{
+  "cleared_count": 3
 }
 ```
 
@@ -195,6 +202,17 @@ This endpoint removes the specified URL from the cache. The next time the image 
   "payload": {
     "type": "error",
     "reason": "Missing 'url' in request body"
+  }
+}
+```
+
+**Error Response (re-download failed):**
+```json
+{
+  "status": "failed",
+  "payload": {
+    "type": "error",
+    "reason": "Failed to refresh URL: https://example.com/image.gif..."
   }
 }
 ```
@@ -212,6 +230,8 @@ transmission.
 
 **Security Features:**
 - ✅ File type validation (triple-layer: extension + MIME + PIL format)
+  - Remote URLs may omit extensions (e.g., `https://cdn.example.com/image/abc123`)
+  - Local files must have valid image extensions
 - ✅ Size limits (10MB max file size, 4096×4096 pixels max)
 - ✅ Path traversal protection (local files restricted to config dir and assets dir)
 - ✅ SSRF protection (blocks private networks, loopback, link-local, cloud metadata endpoints)
@@ -340,6 +360,8 @@ returned in JPEG format for efficient data transmission.
 
 **Security Features:**
 - ✅ File type validation (triple-layer: extension + MIME + PIL format)
+  - Remote URLs may omit extensions (e.g., `https://cdn.example.com/image/abc123`)
+  - Local files must have valid image extensions
 - ✅ Size limits (10MB max file size, 4096×4096 pixels max)
 - ✅ Path traversal protection (local files restricted to config dir and assets dir)
 - ✅ SSRF protection (blocks private networks, loopback, link-local, cloud metadata endpoints)
@@ -472,7 +494,7 @@ A successful response with two extracted frames:
 ### First Access
 1. User requests image via `POST /api/get_image` with JSON body `{"path_url": "https://example.com/image.gif"}`
 2. Image not in cache → download from URL
-3. Validate file type (extension, MIME, PIL format)
+3. Validate file type (extension optional for remote URLs, MIME, PIL format)
 4. Validate size (max 10MB, max 4096×4096 pixels)
 5. Store in cache with metadata
 6. Return image to user

@@ -89,6 +89,12 @@ class TestCacheBasicOperations:
         assert "cached_at" in entry
         assert "last_accessed" in entry
         assert entry["access_count"] == 1
+        # Verify image metadata is extracted
+        assert entry["width"] == 100
+        assert entry["height"] == 100
+        assert entry["format"] == "PNG"
+        assert entry["n_frames"] == 1
+        assert entry["is_animated"] is False
 
 
 class TestCacheAccessTracking:
@@ -264,6 +270,19 @@ class TestCacheStatistics:
         assert stats["max_count"] == cache.max_items
         assert len(stats["entries"]) == 3
 
+        # Verify image metadata is included in stats
+        for entry in stats["entries"]:
+            assert "width" in entry
+            assert "height" in entry
+            assert "format" in entry
+            assert "n_frames" in entry
+            assert "is_animated" in entry
+            assert entry["width"] == 100
+            assert entry["height"] == 100
+            assert entry["format"] == "PNG"
+            assert entry["n_frames"] == 1
+            assert entry["is_animated"] is False
+
     def test_stats_entries_sorted_by_access_count(
         self, cache, sample_image_data
     ):
@@ -398,16 +417,20 @@ FALLBACK ON ERROR:
 class TestCacheFallbackOnError:
     """Test cache fallback behavior when cached files are corrupted."""
 
+    @patch("ledfx.utils.validate_url_safety")
     @patch("ledfx.utils.build_browser_request")
     @patch("urllib.request.urlopen")
     def test_corrupt_cache_fallback_open_image(
         self,
         mock_urlopen,
         mock_build_request,
+        mock_validate_url,
         sample_image_data,
         tmp_path,
     ):
         """Test that open_image falls back to download if cached file is corrupted."""
+        # Mock URL validation to pass
+        mock_validate_url.return_value = (True, None)
 
         # Initialize global cache
         init_image_cache(str(tmp_path), max_size_mb=1, max_items=5)
@@ -448,16 +471,20 @@ class TestCacheFallbackOnError:
         # Verify download was attempted (mock was called)
         assert mock_urlopen.called
 
+    @patch("ledfx.utils.validate_url_safety")
     @patch("ledfx.utils.build_browser_request")
     @patch("urllib.request.urlopen")
     def test_corrupt_cache_fallback_open_gif(
         self,
         mock_urlopen,
         mock_build_request,
+        mock_validate_url,
         sample_image_data,
         tmp_path,
     ):
         """Test that open_gif falls back to download if cached file is corrupted."""
+        # Mock URL validation to pass
+        mock_validate_url.return_value = (True, None)
 
         # Initialize global cache
         init_image_cache(str(tmp_path), max_size_mb=1, max_items=5)
@@ -497,3 +524,50 @@ class TestCacheFallbackOnError:
 
         # Verify download was attempted
         assert mock_urlopen.called
+
+
+class TestCacheImageMetadata:
+    """Test image metadata extraction for cached images."""
+
+    def test_animated_gif_metadata(self, cache, tmp_path):
+        """Test animated GIF metadata is extracted correctly."""
+        # Create a simple 2-frame animated GIF
+        frames = []
+        for color in [(255, 0, 0), (0, 0, 255)]:  # Red, Blue
+            img = Image.new("RGB", (50, 50), color=color)
+            frames.append(img)
+
+        gif_path = tmp_path / "animated.gif"
+        frames[0].save(
+            str(gif_path),
+            save_all=True,
+            append_images=frames[1:],
+            duration=100,
+            loop=0,
+        )
+
+        # Read the GIF data
+        with open(str(gif_path), "rb") as f:
+            gif_data = f.read()
+
+        # Cache it
+        url = "https://example.com/animated.gif"
+        cache.put(url, gif_data, "image/gif")
+
+        # Verify metadata
+        entry_key = cache._generate_cache_key(url)
+        entry = cache.metadata["cache_entries"][entry_key]
+        assert entry["width"] == 50
+        assert entry["height"] == 50
+        assert entry["format"] == "GIF"
+        assert entry["n_frames"] == 2
+        assert entry["is_animated"] is True
+
+        # Verify it appears in stats
+        stats = cache.get_stats()
+        gif_entry = next(e for e in stats["entries"] if e["url"] == url)
+        assert gif_entry["width"] == 50
+        assert gif_entry["height"] == 50
+        assert gif_entry["format"] == "GIF"
+        assert gif_entry["n_frames"] == 2
+        assert gif_entry["is_animated"] is True

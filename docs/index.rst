@@ -4,10 +4,13 @@
    :maxdepth: 2
    :caption: Installation & Development
 
+   /contributing
    /installing
    /launch
+   /security
    /developer/developer
    /developer/architecture
+   /developer/guides
    /README
 
 .. toctree::
@@ -15,8 +18,11 @@
    :caption: Configuration
 
    /configuring
+   /settings/asset_workflow
+   /settings/scenes
+   /settings/playlists
+   /settings/directing_audio
    /settings/index_settings
-   /directing_audio
 
 .. toctree::
    :maxdepth: 1
@@ -40,6 +46,7 @@
    /howto/example_config
    /howto/keybeat
    /howto/virtuals
+   /howto/complex_segments
    /howto/reorder
    /howto/alpha
 
@@ -52,7 +59,9 @@
    /apis/cache
    /apis/log
    /apis/websocket
+   /apis/websocket_client
    /apis/scenes
+   /apis/sendspin_servers
    /apis/playlists
    /apis/global
 

@@ -13,10 +13,16 @@ import voluptuous as vol
 
 import ledfx.api.websocket
 from ledfx.api.websocket import WEB_AUDIO_CLIENTS, WebAudioStream
+from ledfx.config import save_config
 from ledfx.effects import Effect
 from ledfx.effects.math import ExpFilter
 from ledfx.effects.melbank import FFT_SIZE, MIC_RATE, Melbanks
 from ledfx.events import AudioDeviceChangeEvent, Event
+from ledfx.sendspin import SENDSPIN_AVAILABLE
+from ledfx.sendspin.config import is_always_on as is_sendspin_always_on
+
+# Sendspin server configurations discovered or configured
+SENDSPIN_SERVERS = {}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,13 +42,227 @@ class AudioInputSource:
     _subscriber_threshold = 0
     _timer = None
     _last_active = None
+    # Track device by name, not index (indices can change)
+    _last_device_name = None
+    _device_list_cache = None  # Cache for device list
+    _class_lock = threading.Lock()  # Class-level lock for shared state
+    _activating = False  # Re-entry guard for activate()
+
+    @staticmethod
+    def refresh_device_list():
+        """
+        Force sounddevice/PortAudio to rescan audio devices.
+        This is necessary because PortAudio caches the device list at initialization.
+
+        If an audio stream is active, it will be gracefully stopped before refreshing.
+
+        Serialized with activate() via _activating guard to prevent
+        sd._terminate()/_initialize() from running concurrently with
+        open_audio_stream().
+
+        Returns:
+            bool: True if an audio stream was active before refresh (and should be reactivated),
+                  False otherwise
+        """
+        # Wait for any in-progress activation to complete before touching
+        # PortAudio.  Setting _activating = True also blocks concurrent
+        # activate() calls while the refresh is running.
+        deadline = time.monotonic() + 10
+        while True:
+            with AudioInputSource._class_lock:
+                if not AudioInputSource._activating:
+                    AudioInputSource._activating = True
+                    break
+            if time.monotonic() > deadline:
+                _LOGGER.warning(
+                    "Timed out waiting for activation to complete before device list refresh"
+                )
+                return False
+            time.sleep(0.05)
+
+        try:
+            # Check if there's an active stream that needs to be stopped
+            # Use class lock to safely cache and clear the stream reference
+            stream_to_close = None
+            with AudioInputSource._class_lock:
+                was_active = AudioInputSource._audio_stream_active
+
+                if was_active:
+                    _LOGGER.info(
+                        "Stopping audio stream before device list refresh..."
+                    )
+                    # Cache and clear inside lock (atomic operation)
+                    stream_to_close = AudioInputSource._stream
+                    AudioInputSource._stream = None
+                    AudioInputSource._audio_stream_active = False
+
+            # Close outside lock to avoid deadlock with audio callbacks
+            if stream_to_close:
+                try:
+                    stream_to_close.stop()
+                    stream_to_close.close()
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Error closing stream during refresh: %s", e
+                    )
+
+            try:
+                # Force PortAudio to rescan devices by terminating and reinitializing
+                sd._terminate()
+                sd._initialize()
+                # Clear the device list cache
+                AudioInputSource._device_list_cache = None
+                _LOGGER.info("Audio device list refreshed")
+            except Exception as e:
+                _LOGGER.warning("Failed to refresh audio device list: %s", e)
+
+            return was_active
+        finally:
+            with AudioInputSource._class_lock:
+                AudioInputSource._activating = False
+
+    def _persist_config(self):
+        """
+        Sync audio config to central config and persist to disk.
+        No-op when _ledfx is not available (e.g. in tests).
+        Returns True on success, False on failure or unavailable.
+        """
+        if not (hasattr(self, "_ledfx") and self._ledfx):
+            return False
+        self._ledfx.config["audio"] = self._config
+        try:
+            save_config(
+                config=self._ledfx.config,
+                config_dir=self._ledfx.config_dir,
+            )
+            return True
+        except Exception as e:
+            _LOGGER.warning("Failed to persist audio config: %s", e)
+            return False
+
+    def _update_device_config(self, device_idx):
+        """
+        Update device index and name in both local and central configs.
+
+        Args:
+            device_idx: The device index to set, or None to clear
+        """
+        self._config["audio_device"] = device_idx
+        # Also persist the device name for cross-session recovery
+        devices = self.input_devices()
+        if device_idx is not None and device_idx in devices:
+            self._config["audio_device_name"] = devices[device_idx]
+        else:
+            self._config["audio_device_name"] = ""
+        # Persist to disk so recovered device survives restarts
+        self._persist_config()
+
+    def handle_device_list_change(self):
+        """
+        Handle audio device list changes with automatic stream recovery.
+
+        This method encapsulates the full lifecycle:
+        1. Stop active stream and refresh device list
+        2. Find previously active device by name (indices may have shifted)
+        3. Update config with new device index if changed
+        4. Reactivate stream with correct device
+
+        This keeps all audio recovery logic in one place rather than split
+        across core.py and audio.py.
+        """
+        # Stop any active stream and refresh the device list
+        was_active = self.refresh_device_list()
+
+        # If no stream was active, nothing to recover
+        if not was_active:
+            _LOGGER.debug(
+                "Device list changed but no audio stream was active - no recovery needed"
+            )
+            return
+
+        # Try to find the previously active device by name
+        # (device indices may have shifted after plug/unplug)
+        with AudioInputSource._class_lock:
+            last_device_name = AudioInputSource._last_device_name
+            last_device_idx = AudioInputSource._last_active
+
+        if not last_device_name:
+            _LOGGER.warning(
+                "Cannot recover audio stream: previous device name not tracked"
+            )
+            # Try to reactivate with current config anyway
+            try:
+                self.activate()
+            except Exception as e:
+                _LOGGER.error(
+                    "Failed to reactivate audio stream after device change: %s",
+                    e,
+                )
+            return
+
+        # Find device at its new index
+        _LOGGER.info(
+            "Attempting to recover audio device '%s' (was at index %s)",
+            last_device_name,
+            last_device_idx,
+        )
+        found_idx = self.get_device_index_by_name(last_device_name)
+
+        if found_idx == -1:
+            _LOGGER.warning(
+                "Previously active device '%s' no longer available after device list change. "
+                "Will use default device.",
+                last_device_name,
+            )
+            # Clear the stored device info since it's gone
+            with AudioInputSource._class_lock:
+                AudioInputSource._last_device_name = None
+                AudioInputSource._last_active = None
+
+            # Use default device logic (prefers loopback of default output, then default input)
+            fallback_idx = AudioInputSource.default_device_index()
+            if fallback_idx is not None:
+                _LOGGER.info("Using fallback device at index %s", fallback_idx)
+                self._update_device_config(fallback_idx)
+            else:
+                # No valid devices at all - clear config to trigger validator
+                _LOGGER.warning("No fallback device available")
+                self._update_device_config(None)
+        else:
+            current_config_idx = self._config.get("audio_device", -1)
+            if found_idx != current_config_idx:
+                _LOGGER.info(
+                    "Device list changed: '%s' moved from index %s to %s",
+                    last_device_name,
+                    current_config_idx,
+                    found_idx,
+                )
+            else:
+                _LOGGER.info(
+                    "Device list changed: '%s' still at index %s",
+                    last_device_name,
+                    found_idx,
+                )
+
+            # Always update config with found index to ensure consistency
+            self._update_device_config(found_idx)
+
+        # Reactivate the stream with the updated configuration
+        try:
+            _LOGGER.info("Reactivating audio stream after device list refresh")
+            self.activate()
+        except Exception as e:
+            _LOGGER.error(
+                "Failed to reactivate audio stream after device change: %s", e
+            )
 
     @staticmethod
     def device_index_validator(val):
         """
-        Validates device index in case the saved setting is no longer valid
+        Validates device index in case the saved setting is no longer valid.
+        Accepts None (schema default) and resolves to the default device.
         """
-        if val in AudioInputSource.valid_device_indexes():
+        if val is not None and val in AudioInputSource.valid_device_indexes():
             return val
         else:
             return AudioInputSource.default_device_index()
@@ -81,7 +301,9 @@ class AudioInputSource:
 
             # We need to run over the device list looking for the target devices name
             _LOGGER.debug(
-                f"Looking for audio loopback device for default output device at index {default_output_device_idx}: {default_output_device_name}"
+                "Looking for audio loopback device for default output device at index %s: %s",
+                default_output_device_idx,
+                default_output_device_name,
             )
             for device_index, device in enumerate(device_list):
                 # sometimes the audio device name string is truncated, so we need to match what we have and Loopback but otherwise be sloppy
@@ -91,7 +313,9 @@ class AudioInputSource:
                 ):
                     # Return the loopback device index
                     _LOGGER.debug(
-                        f"Found audio loopback device for default output device at index {device_index}: {device['name']}"
+                        "Found audio loopback device for default output device at index %s: %s",
+                        device_index,
+                        device["name"],
                     )
                     return device_index
 
@@ -105,7 +329,9 @@ class AudioInputSource:
         else:
             if default_input_device_idx in valid_device_indexes:
                 _LOGGER.debug(
-                    f"No audio loopback device found for default output device. Using default input device at index {default_input_device_idx}: {device_list[default_input_device_idx]['name']}"
+                    "No audio loopback device found for default output device. Using default input device at index %s: %s",
+                    default_input_device_idx,
+                    device_list[default_input_device_idx]["name"],
                 )
                 return default_input_device_idx
             else:
@@ -113,25 +339,49 @@ class AudioInputSource:
                 if len(valid_device_indexes) > 0:
                     first_valid_idx = next(iter(valid_device_indexes))
                     _LOGGER.debug(
-                        f"No valid default audio input device found. Using first valid input device at index {first_valid_idx}: {device_list[first_valid_idx]['name']}"
+                        "No valid default audio input device found. Using first valid input device at index %s: %s",
+                        first_valid_idx,
+                        device_list[first_valid_idx]["name"],
                     )
                     return first_valid_idx
 
     @staticmethod
     def query_hostapis():
-        return sd.query_hostapis() + ({"name": "WEB AUDIO"},)
+        apis = sd.query_hostapis() + ({"name": "WEB AUDIO"},)
+        if SENDSPIN_AVAILABLE:
+            apis = apis + ({"name": "SENDSPIN"},)
+        return apis
 
     @staticmethod
     def query_devices():
-        return sd.query_devices() + tuple(
+        hostapis = AudioInputSource.query_hostapis()
+        web_audio_idx = next(
+            i for i, h in enumerate(hostapis) if h["name"] == "WEB AUDIO"
+        )
+        devices = sd.query_devices() + tuple(
             {
-                "hostapi": len(AudioInputSource.query_hostapis()) - 1,
+                "hostapi": web_audio_idx,
                 "name": f"{client}",
                 "max_input_channels": 1,
                 "client": client,
             }
             for client in WEB_AUDIO_CLIENTS
         )
+        if SENDSPIN_AVAILABLE:
+            sendspin_idx = next(
+                i for i, h in enumerate(hostapis) if h["name"] == "SENDSPIN"
+            )
+            sendspin_devices = tuple(
+                {
+                    "hostapi": sendspin_idx,
+                    "name": name,
+                    "max_input_channels": 1,
+                    "sendspin_config": config,
+                }
+                for name, config in SENDSPIN_SERVERS.items()
+            )
+            devices = devices + sendspin_devices
+        return devices
 
     @staticmethod
     def input_devices():
@@ -149,7 +399,6 @@ class AudioInputSource:
     @staticmethod
     @property
     def AUDIO_CONFIG_SCHEMA():
-        default_device_index = AudioInputSource.default_device_index()
         AudioInputSource.valid_device_indexes()
         AudioInputSource.input_devices()
         return vol.Schema(
@@ -161,8 +410,9 @@ class AudioInputSource:
                     vol.Coerce(float), vol.Range(min=0.0, max=1.0)
                 ),
                 vol.Optional(
-                    "audio_device", default=default_device_index
+                    "audio_device", default=None
                 ): AudioInputSource.device_index_validator,
+                vol.Optional("audio_device_name", default=""): str,
                 vol.Optional(
                     "delay_ms",
                     default=0,
@@ -188,24 +438,88 @@ class AudioInputSource:
 
         self._ledfx.events.add_listener(shutdown_event, Event.LEDFX_SHUTDOWN)
 
+    def _resolve_device_from_name(self):
+        """
+        Resolve the audio device by name from config.
+        Called at startup/config-update to handle index drift across restarts.
+
+        Resolution order:
+        1. Name match at saved index (fast path, no drift)
+        2. Name match at different index (drift detected, update index)
+        3. No name stored (legacy config) — use index as-is
+        4. Name not found — fall through to existing index/default logic
+        """
+        saved_name = self._config.get("audio_device_name", "")
+        saved_idx = self._config.get("audio_device")
+
+        if not saved_name:
+            # No name stored (legacy config or first run) — use index as-is
+            return
+
+        devices = self.input_devices()
+
+        # Fast path: saved index exists and name matches
+        if saved_idx in devices and devices[saved_idx] == saved_name:
+            _LOGGER.debug(
+                "Audio device '%s' confirmed at index %s",
+                saved_name,
+                saved_idx,
+            )
+            return
+
+        # Name-based search (index has drifted)
+        found_idx = self.get_device_index_by_name(saved_name)
+
+        if found_idx != -1:
+            _LOGGER.info(
+                "Audio device '%s' moved from index %s to %s (enumeration changed)",
+                saved_name,
+                saved_idx,
+                found_idx,
+            )
+            self._config["audio_device"] = found_idx
+            # Persist the corrected index
+            self._persist_config()
+            return
+
+        # Device not found by name at all — reset to default so we don't
+        # silently open a different device that now occupies the stale index.
+        default_idx = self.default_device_index()
+        _LOGGER.warning(
+            "Saved audio device '%s' not found in current device list. "
+            "Resetting to default device (index %s).",
+            saved_name,
+            default_idx,
+        )
+        self._config["audio_device"] = default_idx
+        self._config["audio_device_name"] = ""
+        # Clear runtime tracking so hotplug won't try to recover the old device
+        with AudioInputSource._class_lock:
+            AudioInputSource._last_device_name = None
+            AudioInputSource._last_active = None
+        self._persist_config()
+
     def update_config(self, config):
         """Deactivate the audio, update the config, the reactivate"""
-        if self._audio_stream_active:
+        if AudioInputSource._audio_stream_active:
             self.deactivate()
         self._config = self.AUDIO_CONFIG_SCHEMA.fget()(config)
+        # Resolve device by name if available (handles index drift across restarts)
+        self._resolve_device_from_name()
 
         # cache up last active and lets see if it changes
-        # Read _last_active with lock protection
-        with self.lock:
-            last_active = self._last_active
+        # Read _last_active with class lock protection
+        with AudioInputSource._class_lock:
+            last_active = AudioInputSource._last_active
 
         # Activate outside the lock to avoid deadlock
-        if len(self._callbacks) != 0:
+        should_always_on = self._should_always_keep_active()
+        if len(self._callbacks) != 0 or should_always_on:
             self.activate()
 
         # Check if device changed and fire event if needed
-        with self.lock:
-            if last_active != self._last_active:
+        with AudioInputSource._class_lock:
+            if last_active != AudioInputSource._last_active:
                 self._ledfx.events.fire_event(
                     AudioDeviceChangeEvent(
                         self.input_devices()[self._config["audio_device"]]
@@ -215,11 +529,28 @@ class AudioInputSource:
         self._ledfx.config["audio"] = self._config
 
     def activate(self):
+        # Re-entry guard - must be atomic with _class_lock so concurrent
+        # callers cannot both pass the check before either sets the flag.
+        with AudioInputSource._class_lock:
+            if AudioInputSource._activating:
+                _LOGGER.warning("activate() re-entry blocked")
+                return
+            AudioInputSource._activating = True
+        try:
+            self._activate_inner()
+        finally:
+            with AudioInputSource._class_lock:
+                AudioInputSource._activating = False
+
+    def _activate_inner(self):
+
         if self._audio is None:
             try:
                 self._audio = sd
             except OSError as Error:
-                _LOGGER.critical(f"Sounddevice error: {Error}. Shutting down.")
+                _LOGGER.critical(
+                    "Sounddevice error: %s. Shutting down.", Error
+                )
                 self._ledfx.stop()
 
         # Enumerate all of the input devices and find the one matching the
@@ -227,8 +558,8 @@ class AudioInputSource:
         input_devices = self.query_devices()
 
         hostapis = self.query_hostapis()
-        default_device = self.default_device_index()
-        if default_device is None:
+        valid_device_indexes = self.valid_device_indexes()
+        if not valid_device_indexes:
             # There are no valid audio input devices, so we can't activate the audio source.
             # We should never get here, as we check for devices on start-up.
             # This likely just captures if a device is removed after start-up.
@@ -237,7 +568,6 @@ class AudioInputSource:
             )
             self.deactivate()
             return
-        valid_device_indexes = self.valid_device_indexes()
         _LOGGER.debug("********************************************")
         _LOGGER.debug("Valid audio input devices:")
         for index in valid_device_indexes:
@@ -245,24 +575,43 @@ class AudioInputSource:
             device_name = input_devices[index]["name"]
             input_channels = input_devices[index]["max_input_channels"]
             _LOGGER.debug(
-                f"Audio Device {index}\t{hostapi_name}\t{device_name}\tinput_channels: {input_channels}"
+                "  [%s] %s: %s (channels: %s)",
+                index,
+                hostapi_name,
+                device_name,
+                input_channels,
             )
         _LOGGER.debug("********************************************")
         device_idx = self._config["audio_device"]
-        _LOGGER.debug(
-            f"default_device: {default_device} config_device: {device_idx}"
-        )
 
-        if device_idx > max(valid_device_indexes):
-            _LOGGER.warning(
-                f"Audio device out of range: {device_idx}. Reverting to default input device: {default_device}"
-            )
-            device_idx = default_device
-
-        elif device_idx not in valid_device_indexes:
-            _LOGGER.warning(
-                f"Audio device {input_devices[device_idx]['name']} not in valid_device_indexes. Reverting to default input device: {default_device}"
-            )
+        if device_idx not in valid_device_indexes:
+            # Configured device is invalid — resolve the default now
+            default_device = self.default_device_index()
+            if device_idx is not None and device_idx > max(
+                valid_device_indexes
+            ):
+                _LOGGER.warning(
+                    "Audio device index %s out of range (max valid: %s). "
+                    "Falling back to default device index %s",
+                    device_idx,
+                    max(valid_device_indexes),
+                    default_device,
+                )
+            else:
+                # Get device name safely (input_devices is a tuple, not dict)
+                try:
+                    device_name = input_devices[device_idx].get(
+                        "name", f"index {device_idx}"
+                    )
+                except (IndexError, KeyError, TypeError):
+                    device_name = f"index {device_idx}"
+                _LOGGER.warning(
+                    "Audio device [%s] '%s' not in valid devices. "
+                    "Falling back to default device index %s",
+                    device_idx,
+                    device_name,
+                    default_device,
+                )
             device_idx = default_device
 
         # Setup a pre-emphasis filter to balance the input volume of lows to highs
@@ -313,6 +662,20 @@ class AudioInputSource:
         else:
             self.delay_queue = None
 
+        def update_device_tracking(device_idx):
+            """
+            Update class-level tracking of active device index and name.
+            Thread-safe with class lock protection.
+            """
+            with AudioInputSource._class_lock:
+                AudioInputSource._last_active = device_idx
+                device_name = input_devices[device_idx].get("name", None)
+                AudioInputSource._last_device_name = (
+                    f"{hostapis[input_devices[device_idx]['hostapi']]['name']}: {device_name}"
+                    if device_name
+                    else None
+                )
+
         def open_audio_stream(device_idx):
             """
             Opens an audio stream for the specified input device.
@@ -334,7 +697,9 @@ class AudioInputSource:
                 and "Loopback" in device["name"]
             ):
                 _LOGGER.info(
-                    f"Loopback device detected: {device['name']} with {device['max_input_channels']} channels"
+                    "Loopback device detected: %s with %s channels",
+                    device["name"],
+                    device["max_input_channels"],
                 )
             else:
                 # if are not a windows loopback device, we will downmix to mono
@@ -343,13 +708,28 @@ class AudioInputSource:
                 channels = 1
 
             if hostapis[device["hostapi"]]["name"] == "WEB AUDIO":
-                ledfx.api.websocket.ACTIVE_AUDIO_STREAM = self._stream = (
-                    WebAudioStream(
-                        device["client"], self._audio_sample_callback
-                    )
+                ledfx.api.websocket.ACTIVE_AUDIO_STREAM = (
+                    AudioInputSource._stream
+                ) = WebAudioStream(
+                    device["client"], self._audio_sample_callback
+                )
+            elif (
+                SENDSPIN_AVAILABLE
+                and hostapis[device["hostapi"]]["name"] == "SENDSPIN"
+            ):
+                from ledfx.sendspin.stream import SendspinAudioStream
+
+                _LOGGER.debug(
+                    "Opening SendspinAudioStream for '%s'",
+                    device["name"],
+                )
+                AudioInputSource._stream = SendspinAudioStream(
+                    device["sendspin_config"],
+                    self._audio_sample_callback,
+                    instance_id=self._ledfx.config.get("instance_id", ""),
                 )
             else:
-                self._stream = self._audio.InputStream(
+                AudioInputSource._stream = self._audio.InputStream(
                     samplerate=int(device["default_samplerate"]),
                     device=device_idx,
                     callback=self._audio_sample_callback,
@@ -366,36 +746,108 @@ class AudioInputSource:
             self.resampler = samplerate.Resampler("sinc_fastest", channels=1)
 
             _LOGGER.info(
-                f"Audio source opened: {hostapis[device['hostapi']]['name']}: {device.get('name', device.get('client'))}"
+                "Audio source opened: %s: %s",
+                hostapis[device["hostapi"]]["name"],
+                device.get("name", device.get("client")),
             )
 
-            self._stream.start()
-            self._audio_stream_active = True
+            AudioInputSource._stream.start()
+            with AudioInputSource._class_lock:
+                AudioInputSource._audio_stream_active = True
 
-        try:
-            open_audio_stream(device_idx)
-            # Protect concurrent access to _last_active with lock
-            with self.lock:
-                self._last_active = device_idx
-        except OSError as e:
-            _LOGGER.critical(
-                f"Unable to open Audio Device: {e} - please retry."
+        def try_open_device(dev_idx, reinit=False):
+            """
+            Attempt to open an audio device, optionally reinitializing
+            PortAudio first (clears poisoned state from WDM-KS devices).
+            Returns True on success, False on failure.
+            """
+            if reinit:
+                self.deactivate()
+                try:
+                    sd._terminate()
+                    sd._initialize()
+                except Exception as reinit_err:
+                    _LOGGER.warning("PortAudio reinit failed: %s", reinit_err)
+                    return False
+            try:
+                open_audio_stream(dev_idx)
+                update_device_tracking(dev_idx)
+                return True
+            except (sd.PortAudioError, OSError) as err:
+                _LOGGER.warning("Audio device [%s] failed: %s", dev_idx, err)
+                return False
+
+        def persist_device_name_if_needed():
+            """
+            Ensure device index and name are persisted for cross-session
+            recovery.  Also handles seamless upgrade from legacy configs
+            (index-only) and fallback-open scenarios where the actual
+            device differs from the configured one.
+            """
+            with AudioInputSource._class_lock:
+                current_name = AudioInputSource._last_device_name
+                current_idx = AudioInputSource._last_active
+
+            if not current_name or current_idx is None:
+                return
+
+            name_changed = (
+                self._config.get("audio_device_name", "") != current_name
             )
-            self.deactivate()
-        except sd.PortAudioError as e:
-            _LOGGER.error(f"{e}, Reverting to default input device")
-            open_audio_stream(default_device)
+            idx_changed = self._config.get("audio_device") != current_idx
+
+            if name_changed or idx_changed:
+                self._config["audio_device"] = current_idx
+                self._config["audio_device_name"] = current_name
+                if self._persist_config():
+                    _LOGGER.info(
+                        "Persisted audio device '%s' (index %s) for cross-session recovery",
+                        current_name,
+                        current_idx,
+                    )
+
+        # Audio device startup sequence:
+        # PortAudio's internal state may be poisoned at startup
+        # (e.g. WDM-KS devices interfere during initial enumeration).
+        # Recovery: try configured → reinit + retry configured → reinit + fallback
+        if try_open_device(device_idx):
+            persist_device_name_if_needed()
+            return
+
+        _LOGGER.info(
+            "Reinitializing PortAudio and retrying device [%s]...", device_idx
+        )
+        if try_open_device(device_idx, reinit=True):
+            _LOGGER.info(
+                "Audio device [%s] opened successfully after PortAudio reinit.",
+                device_idx,
+            )
+            persist_device_name_if_needed()
+            return
+
+        fallback_device = self.default_device_index()
+        _LOGGER.info("Falling back to default device [%s]...", fallback_device)
+        if fallback_device is not None and try_open_device(
+            fallback_device, reinit=True
+        ):
+            persist_device_name_if_needed()
+            return
+
+        _LOGGER.warning(
+            "All audio devices failed - please retry or select a different device."
+        )
+        self.deactivate()
 
     def deactivate(self):
         # Stop the stream outside the lock to avoid deadlock with audio callback
         # The audio callback thread may be waiting to complete, and if it needs
-        # any locks, holding self.lock while calling stop() creates a circular wait
+        # any locks, holding the lock while calling stop() creates a circular wait
         stream_to_close = None
-        with self.lock:
-            if self._stream:
-                stream_to_close = self._stream
-                self._stream = None
-            self._audio_stream_active = False
+        with AudioInputSource._class_lock:
+            if AudioInputSource._stream:
+                stream_to_close = AudioInputSource._stream
+                AudioInputSource._stream = None
+            AudioInputSource._audio_stream_active = False
 
         # Stop/close outside the lock
         if stream_to_close:
@@ -403,10 +855,24 @@ class AudioInputSource:
             stream_to_close.close()
             _LOGGER.info("Audio source closed.")
 
+    def _should_always_keep_active(self):
+        """Check if the current audio source should stay active regardless of subscribers."""
+        if not self._ledfx.config.get("sendspin_always_on", False):
+            return False
+        device_idx = self._config.get("audio_device")
+        return is_sendspin_always_on(
+            device_idx,
+            self.query_devices,
+            self.query_hostapis,
+        )
+
     def subscribe(self, callback):
         """Registers a callback with the input source"""
         self._callbacks.append(callback)
-        if len(self._callbacks) > 0 and not self._audio_stream_active:
+        if (
+            len(self._callbacks) > 0
+            and not AudioInputSource._audio_stream_active
+        ):
             self.activate()
         if self._timer is not None:
             self._timer.cancel()
@@ -416,9 +882,14 @@ class AudioInputSource:
         """Unregisters a callback with the input source"""
         if callback in self._callbacks:
             self._callbacks.remove(callback)
+        if self._should_always_keep_active():
+            _LOGGER.debug(
+                "Sendspin always-on active, skipping deactivate timer"
+            )
+            return
         if (
             len(self._callbacks) <= self._subscriber_threshold
-            and self._audio_stream_active
+            and AudioInputSource._audio_stream_active
         ):
             if self._timer is not None:
                 self._timer.cancel()
@@ -429,16 +900,55 @@ class AudioInputSource:
         if self._timer is not None:
             self._timer.cancel()
         self._timer = None
+        if self._should_always_keep_active():
+            _LOGGER.debug("Sendspin always-on active, skipping deactivate")
+            return
         if (
             len(self._callbacks) <= self._subscriber_threshold
-            and self._audio_stream_active
+            and AudioInputSource._audio_stream_active
         ):
             self.deactivate()
 
     def get_device_index_by_name(self, device_name: str):
-        for key, value in self.input_devices().items():
+        """
+        Find device index by name string.
+        Tries exact match first, then falls back to partial match since
+        device names can be truncated.
+
+        Uses careful partial matching to avoid false positives when device
+        names are similar (e.g., "Microphone" vs "Microphone (Realtek)").
+        """
+        devices = self.input_devices()
+
+        # First try exact match
+        for key, value in devices.items():
             if device_name == value:
                 return key
+
+        # Fallback to partial match (device names can be truncated)
+        # Only match if the stored name is contained in the current device name
+        # (not the reverse, to avoid matching shorter names incorrectly)
+        best_match_idx = -1
+        best_match_len = 0
+
+        for key, value in devices.items():
+            # Case 1: Stored name is substring of current device name
+            # This handles truncation where stored name is shorter
+            if device_name in value:
+                # Prefer longer matches to find the most specific device
+                if len(value) > best_match_len:
+                    best_match_idx = key
+                    best_match_len = len(value)
+
+        if best_match_idx != -1:
+            _LOGGER.debug(
+                "Found device by partial match: '%s' in '%s' at index %s",
+                device_name,
+                devices[best_match_idx],
+                best_match_idx,
+            )
+            return best_match_idx
+
         return -1
 
     def _audio_sample_callback(self, in_data, frame_count, time_info, status):
@@ -463,7 +973,9 @@ class AudioInputSource:
 
         if len(processed_audio_sample) != out_sample_len:
             _LOGGER.debug(
-                f"Discarded malformed audio frame - {len(processed_audio_sample)} samples, expected {out_sample_len}"
+                "Discarded malformed audio frame - %s samples, expected %s",
+                len(processed_audio_sample),
+                out_sample_len,
             )
             return
 
@@ -710,7 +1222,7 @@ class AudioAnalysisSource(AudioInputSource):
         try:
             return self._pitch(self.audio_sample(raw=True))[0]
         except ValueError as e:
-            _LOGGER.warning(e)
+            _LOGGER.warning("%s", e)
             return 0
 
     @lru_cache(maxsize=None)
@@ -718,7 +1230,7 @@ class AudioAnalysisSource(AudioInputSource):
         try:
             return bool(self._onset(self.audio_sample(raw=True))[0])
         except ValueError as e:
-            _LOGGER.warning(e)
+            _LOGGER.warning("%s", e)
             return 0
 
     @lru_cache(maxsize=None)
@@ -729,7 +1241,7 @@ class AudioAnalysisSource(AudioInputSource):
         try:
             return bool(self._tempo(self.audio_sample(raw=True))[0])
         except ValueError as e:
-            _LOGGER.warning(e)
+            _LOGGER.warning("%s", e)
             return False
 
     @lru_cache(maxsize=None)
@@ -920,8 +1432,13 @@ class AudioReactiveEffect(Effect):
 
     def deactivate(self):
         _LOGGER.info("Deactivating AudioReactiveEffect.")
+
+        self._active = False
+
         if self.audio:
             self.audio.unsubscribe(self._audio_data_updated)
+        self.audio = None
+        self.clear_melbank_freq_props()
         super().deactivate()
 
     def create_filter(self, alpha_decay, alpha_rise):
@@ -978,18 +1495,21 @@ class AudioReactiveEffect(Effect):
     @cached_property
     def _melbank_min_idx(self):
         return next(
-            idx
-            for idx, freq in enumerate(
-                self.audio.melbanks.melbank_processors[
-                    self._selected_melbank
-                ].melbank_frequencies
-            )
-            if freq >= self._virtual.frequency_range.min
+            (
+                idx
+                for idx, freq in enumerate(
+                    self.audio.melbanks.melbank_processors[
+                        self._selected_melbank
+                    ].melbank_frequencies
+                )
+                if freq >= self._virtual.frequency_range.min
+            ),
+            0,  # Default to 0 if no frequency >= min
         )
 
     @cached_property
     def _melbank_max_idx(self):
-        return next(
+        max_idx = next(
             (
                 idx
                 for idx, freq in enumerate(
@@ -1005,10 +1525,22 @@ class AudioReactiveEffect(Effect):
                 ].melbank_frequencies
             ),
         )
+        # Ensure max_idx is always at least min_idx + 1 to prevent empty slices
+        return max(max_idx, self._melbank_min_idx + 1)
 
     @cached_property
     def _input_mel_length(self):
-        return self._melbank_max_idx - self._melbank_min_idx
+        length = self._melbank_max_idx - self._melbank_min_idx
+        # Ensure we have at least 1 frequency bin to avoid crashes
+        if length < 1:
+            _LOGGER.warning(
+                "Frequency range %s-%sHz resulted in %s melbank bins. Adjusting to minimum of 1 bin. Consider using a wider frequency range.",
+                self._virtual.frequency_range.min,
+                self._virtual.frequency_range.max,
+                length,
+            )
+            return 1
+        return length
 
     @lru_cache(maxsize=16)
     def _melbank_interp_linspaces(self, size):
@@ -1058,9 +1590,18 @@ class AudioReactiveEffect(Effect):
         """
         Returns the melbank split into three sections (unequal length)
         Useful for effects that use lows, mids, and highs
+
+        Returns three arrays guaranteed to be safe for max/mean operations
+        (empty arrays replaced with array containing 0.0)
         """
         melbank = self.melbank(**kwargs)
         mel_length = len(melbank)
         splits = tuple(map(lambda i: int(i * mel_length), [0.2, 0.5]))
 
-        return np.split(melbank, splits)
+        thirds = np.split(melbank, splits)
+
+        # Ensure each third has at least one element to prevent NaN from max/mean
+        # on empty arrays (can happen with very narrow frequency ranges)
+        return tuple(
+            arr if len(arr) > 0 else np.array([0.0]) for arr in thirds
+        )

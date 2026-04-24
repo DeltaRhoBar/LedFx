@@ -1,8 +1,106 @@
-import os
-
-from ledfx.consts import LEDFX_ASSETS_PATH
-
 ledfx_presets = {
+    "smoke2d": {
+        "ash": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "background_mode": "additive",
+                "blur": 0.0,
+                "brightness": 1.0,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "gradient": "linear-gradient(90deg, #000e01 23.00%,#e9efeb 52.00%,#000000 80.00%)",
+                "gradient_roll": 0.0,
+                "impulse_decay": 0.06,
+                "mirror": False,
+                "multiplier": 2.0,
+                "rotate": 0,
+                "speed": 0.6,
+                "stretch": 2,
+                "test": False,
+                "zoom": 1,
+            },
+            "name": "ASH",
+        },
+        "broil": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "background_mode": "additive",
+                "blur": 0.0,
+                "brightness": 1.0,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "gradient": "linear-gradient(90deg, #06e913 0.00%,#1a0101 39.00%,#000000 66.00%,#03fb00 100.00%)",
+                "gradient_roll": 0.0,
+                "impulse_decay": 0.06,
+                "mirror": False,
+                "multiplier": 2.0,
+                "rotate": 0,
+                "speed": 0.6,
+                "stretch": 2,
+                "test": False,
+                "zoom": 2,
+            },
+            "name": "broil",
+        },
+        "rgb": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "background_mode": "additive",
+                "blur": 0.0,
+                "brightness": 1.0,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "gradient": "linear-gradient(90deg, #ff0000 0.00%,#000000 25.00%,#1aff00 48.00%,#000000 75.00%,#0004fb 99.00%)",
+                "gradient_roll": 0.0,
+                "impulse_decay": 0.06,
+                "mirror": False,
+                "multiplier": 2.0,
+                "rotate": 0,
+                "speed": 1.0,
+                "stretch": 1.5,
+                "test": False,
+                "zoom": 2.0,
+            },
+            "name": "RGB",
+        },
+        "storm": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "background_mode": "additive",
+                "blur": 0.0,
+                "brightness": 1.0,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "gradient": "linear-gradient(90deg, #0000ff 0.00%,#00ffff 33.00%,#800080 66.00%,#ff00b2 99.00%)",
+                "gradient_roll": 0.0,
+                "impulse_decay": 0.06,
+                "mirror": False,
+                "multiplier": 2.0,
+                "rotate": 0,
+                "speed": 2.9,
+                "stretch": 1.5,
+                "test": False,
+                "zoom": 4.6,
+            },
+            "name": "STORM",
+        },
+    },
     "number": {
         "clock": {
             "config": {
@@ -627,6 +725,37 @@ ledfx_presets = {
         },
     },
     "equalizer2d": {
+        "cold": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "bands": 16,
+                "blur": 0.0,
+                "brightness": 1.0,
+                "center": False,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "frequency_range": "Lows (beat+bass)",
+                "gradient": "linear-gradient(90deg, rgb(0, 255, 255) 0%, rgb(0, 0, 255) 100%)",
+                "gradient_roll": 0.0,
+                "max_vs_mean": False,
+                "mirror": False,
+                "peak_decay": 0.03,
+                "peak_marks": False,
+                "peak_percent": 1,
+                "power_gradient": "Progressive",
+                "ring": False,
+                "rotate": 0,
+                "spin": False,
+                "spin_decay": 0.1,
+                "spin_multiplier": 1.0,
+                "test": False,
+            },
+            "name": "cold",
+        },
         "earth": {
             "config": {
                 "advanced": False,
@@ -688,6 +817,69 @@ ledfx_presets = {
                 "test": False,
             },
             "name": "flare",
+        },
+        "gothic": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "bands": 16,
+                "blur": 0.0,
+                "brightness": 1.0,
+                "center": False,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "frequency_range": "Lows (beat+bass)",
+                "gradient": "linear-gradient(90deg, #2e0139 0.00%,#48005a 33.00%,#af00db 100.00%)",
+                "gradient_roll": 0.0,
+                "max_vs_mean": False,
+                "mirror": False,
+                "peak_color": "#380038",
+                "peak_decay": 0.03,
+                "peak_marks": True,
+                "peak_percent": 1,
+                "power_gradient": "Stretch",
+                "ring": False,
+                "rotate": 0,
+                "spin": False,
+                "spin_decay": 0.1,
+                "spin_multiplier": 1.0,
+                "test": False,
+            },
+            "name": "gothic",
+        },
+        "inflamed": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "bands": 16,
+                "blur": 0.0,
+                "brightness": 1.0,
+                "center": True,
+                "diag": False,
+                "dump": False,
+                "flip": False,
+                "flip_horizontal": False,
+                "flip_vertical": False,
+                "frequency_range": "Lows (beat+bass)",
+                "gradient": "linear-gradient(90deg, #ffffff 0.00%,#ff0000 100.00%)",
+                "gradient_roll": 0.0,
+                "max_vs_mean": False,
+                "mirror": False,
+                "peak_decay": 0.03,
+                "peak_marks": False,
+                "peak_percent": 1,
+                "power_gradient": "Solid",
+                "ring": False,
+                "rotate": 0,
+                "spin": False,
+                "spin_decay": 0.1,
+                "spin_multiplier": 1.0,
+                "test": False,
+            },
+            "name": "inflamed",
         },
         "mountain": {
             "config": {
@@ -772,9 +964,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "catfixed.gif"
-                ),
+                "image_location": "builtin://catfixed.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -807,9 +997,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "blade.webp"
-                ),
+                "image_location": "builtin://blade.webp",
                 "mirror": False,
                 "ping_pong": False,
                 "ping_pong_skip": False,
@@ -843,9 +1031,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "bruces1.gif"
-                ),
+                "image_location": "builtin://bruces1.gif",
                 "mirror": False,
                 "ping_pong": True,
                 "rotate": 0,
@@ -879,9 +1065,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "bumble.gif"
-                ),
+                "image_location": "builtin://bumble.gif",
                 "mirror": False,
                 "ping_pong": True,
                 "ping_pong_skip": False,
@@ -914,9 +1098,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "caddy.gif"
-                ),
+                "image_location": "builtin://caddy.gif",
                 "half_beat": False,
                 "mirror": False,
                 "ping_pong": True,
@@ -949,9 +1131,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "dancing.gif"
-                ),
+                "image_location": "builtin://dancing.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -984,9 +1164,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "dj_bird.gif"
-                ),
+                "image_location": "builtin://pixelart/dj_bird.gif",
                 "half_beat": False,
                 "mirror": False,
                 "ping_pong": False,
@@ -1019,9 +1197,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "moonman.gif"
-                ),
+                "image_location": "builtin://moonman.gif",
                 "mirror": False,
                 "ping_pong": True,
                 "ping_pong_skip": False,
@@ -1054,9 +1230,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "cat-space.gif"
-                ),
+                "image_location": "builtin://cat-space.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -1090,9 +1264,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "phoebe.gif"
-                ),
+                "image_location": "builtin://phoebe.gif",
                 "mirror": False,
                 "ping_pong": True,
                 "ping_pong_skip": False,
@@ -1125,9 +1297,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "force_fit": True,
                 "half_beat": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "saturday.webp"
-                ),
+                "image_location": "builtin://saturday.webp",
                 "keep_aspect_ratio": False,
                 "mirror": False,
                 "ping_pong": True,
@@ -1160,9 +1330,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": False,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "snoopy.gif"
-                ),
+                "image_location": "builtin://snoopy.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -1196,9 +1364,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "sponge.gif"
-                ),
+                "image_location": "builtin://sponge.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -1232,9 +1398,7 @@ ledfx_presets = {
                 "flip_vertical": False,
                 "keep_aspect_ratio": True,
                 "force_fit": True,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "zilla1.gif"
-                ),
+                "image_location": "builtin://zilla1.gif",
                 "mirror": False,
                 "ping_pong": False,
                 "rotate": 0,
@@ -2285,6 +2449,24 @@ ledfx_presets = {
         },
     },
     "singleColor": {
+        "black": {
+            "config": {
+                "background_brightness": 1.0,
+                "background_color": "#000000",
+                "blur": 0,
+                "brightness": 1,
+                "color": "#000000",
+                "decay": 1,
+                "flip": False,
+                "mirror": True,
+                "modulate": False,
+                "modulation_effect": "sine",
+                "modulation_speed": 0.5,
+                "speed": 5,
+                "threshold": 0.7,
+            },
+            "name": "Black",
+        },
         "blue": {
             "config": {
                 "background_brightness": 1.0,
@@ -2991,9 +3173,7 @@ ledfx_presets = {
                 "pattern": False,
                 "rotate": 0,
                 "test": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "dj_bird.gif"
-                ),
+                "image_location": "builtin://pixelart/dj_bird.gif",
             },
             "name": "DJ Bird",
         },
@@ -3016,9 +3196,7 @@ ledfx_presets = {
                 "pattern": False,
                 "rotate": 0,
                 "test": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "moon_rainbow.gif"
-                ),
+                "image_location": "builtin://pixelart/moon_rainbow.gif",
             },
             "name": "Rainbow Moon",
         },
@@ -3041,9 +3219,7 @@ ledfx_presets = {
                 "pattern": False,
                 "rotate": 0,
                 "test": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "fireworks.gif"
-                ),
+                "image_location": "builtin://pixelart/fireworks.gif",
             },
             "name": "Fireworks",
         },
@@ -3066,9 +3242,7 @@ ledfx_presets = {
                 "pattern": False,
                 "rotate": 0,
                 "test": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "akemi_resized.gif"
-                ),
+                "image_location": "builtin://pixelart/akemi_resized.gif",
             },
             "name": "WLED Akemi",
         },
@@ -3093,9 +3267,7 @@ ledfx_presets = {
                 "pattern": False,
                 "rotate": 0,
                 "test": False,
-                "image_location": os.path.join(
-                    LEDFX_ASSETS_PATH, "gifs", "pixelart", "chicken.gif"
-                ),
+                "image_location": "builtin://pixelart/chicken.gif",
             },
             "name": "Chicken",
         },

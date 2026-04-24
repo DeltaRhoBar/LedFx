@@ -14,6 +14,12 @@ No need to spend hours on end to program one song to program your LEDs, as LedFx
 
 LedFx real-time LED strip music visualization effect controller using is a network based devices (ESP8266/ESP32/Raspberry Pi 4) with support for advanced real-time audio effects! LedFx can control multiple devices and works great with cheap ESP8266/ESP32 nodes allowing for cost effective synchronized effects across your entire house!
 
+Ledfx comes with a browser based front end for configuration, control and live visualisation on port 8888 by default.
+
+| http://localhost:8888
+| http://127.0.0.1:8888
+
+
 Demos
 -------
 
@@ -50,6 +56,10 @@ The below image describes a basic setup - LedFx running on PC, communicating wit
      - Example
    * - Computer running LedFx
      - Windows 10, `LedFx.exe`_
+   * - Browser to access the LedFx web interface
+     - Chrome/Edge/Firefox/Safari
+
+       http://127.0.0.1:8888
    * - Networked device controlling LED Strip
      - ESP8266 NODEMCU v3 running `WLED`_
    * - Addressable LED strip
@@ -72,10 +82,12 @@ The below image describes a basic setup - LedFx running on PC, communicating wit
 
 #. **Direct computer audio output to LedFx.**
       - By default on Windows LedFx will attempt to listen to your system audio.
-      - More information for `Linux and macOS users here <https://ledfx.readthedocs.io/en/latest/directing_audio.html>`_.
+      - More information for `Linux and macOS users here <https://ledfx.readthedocs.io/en/latest/settings/directing_audio.html>`_.
       - Play some music in the background.
 
 #. **Start LedFx.**
+      - With any desired launch options. See `Command Line Options <https://ledfx.readthedocs.io/en/latest/launch.html>`_.
+      - Use --open-ui to open the web interface automatically in your default browser, or navigate to http://127.0.0.1:8888 directly.
       - Your WLED devices should appear in LedFx, automagically configured and ready to go! 🎆🔥
       - If not, on the bottom click Home,  -> ``Scan for WLED devices`` button, or click on the big plus sign and ``Add Device`` to add them manually.
       - If they're still not showing up, make sure they're powered on and properly connected to your WiFi.
@@ -99,7 +111,10 @@ To join, click on the Discord button below:
 Contributing
 --------------
 Pull requests are welcome. Once tested, contact LedFx developer community on Discord to discuss the next step.
-We expect and require all contributors to read, understand and follow our code of conduct.
+
+Please read our `Contributing Guidelines <https://ledfx.readthedocs.io/en/latest/contributing.html>`_ for detailed information on contribution expectations, code quality requirements, and community standards.
+
+We expect and require all contributors to read, understand and follow our `Code of Conduct <https://github.com/LedFx/LedFx/blob/main/CODE_OF_CONDUCT.md>`_.
 
 Credits: `Contributors-&-About`_
 

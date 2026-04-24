@@ -56,6 +56,10 @@ PERMITTED_KEYS = {
         "flush_on_deactivate",
         "ui_brightness_boost",
         "startup_scene_id",
+        "startup_playlist_id",
+        "lifx_broadcast_address",
+        "lifx_discovery_timeout",
+        "sendspin_always_on",
     ),
 }
 
@@ -155,6 +159,12 @@ def convertToJsonSchema(schema):
             "enum": Virtuals.get_virtual_ids(),
             "names": Virtuals.get_virtual_names(),
         }
+
+    elif (
+        callable(schema)
+        and getattr(schema, "__name__", None) == "validate_ipv4_address"
+    ):
+        return {"type": "string", "format": "ipv4"}
 
     elif isinstance(schema, vol.All):
         val = {}

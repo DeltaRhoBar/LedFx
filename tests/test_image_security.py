@@ -10,180 +10,13 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
-# Import validation functions
-from ledfx.utils import (
-    init_image_cache,
-    is_allowed_image_extension,
-    open_gif,
-    open_image,
-    validate_image_mime_type,
-    validate_pil_image,
+from ledfx.utilities.security_utils import is_allowed_image_extension
+from ledfx.utils import init_image_cache, open_gif, open_image
+from tests.test_utilities.naughty_strings import (
+    naughty_filenames,
+    naughty_paths,
+    naughty_urls,
 )
-
-
-class TestFileExtensionValidation:
-    """Test file extension allowlist validation."""
-
-    def test_valid_extensions(self):
-        """Test that allowed extensions pass validation."""
-        valid_files = [
-            "image.gif",
-            "photo.png",
-            "picture.jpg",
-            "graphic.jpeg",
-            "animation.webp",
-            "bitmap.bmp",
-            "document.tiff",
-            "icon.ico",
-        ]
-        for filename in valid_files:
-            assert is_allowed_image_extension(
-                filename
-            ), f"{filename} should be allowed"
-
-    def test_invalid_extensions(self):
-        """Test that disallowed extensions fail validation."""
-        invalid_files = [
-            "file.txt",
-            "document.pdf",
-            "script.py",
-            "config.json",
-            "data.xml",
-            "executable.exe",
-            "archive.zip",
-            "video.mp4",
-        ]
-        for filename in invalid_files:
-            assert not is_allowed_image_extension(
-                filename
-            ), f"{filename} should be rejected"
-
-    def test_case_insensitive(self):
-        """Test that extension checking is case-insensitive."""
-        assert is_allowed_image_extension("image.GIF")
-        assert is_allowed_image_extension("photo.PNG")
-        assert is_allowed_image_extension("picture.JPG")
-
-    def test_no_extension(self):
-        """Test that files without extension are rejected."""
-        assert not is_allowed_image_extension("filename")
-        assert not is_allowed_image_extension("path/to/filename")
-
-
-class TestMimeTypeValidation:
-    """Test MIME type validation."""
-
-    def test_valid_png(self, tmp_path):
-        """Test valid PNG file passes MIME validation."""
-        # Create a small valid PNG
-        img = Image.new("RGB", (10, 10), color="red")
-        img_path = os.path.join(tmp_path, "test.png")
-        img.save(img_path, "PNG")
-
-        assert validate_image_mime_type(str(img_path))
-
-    def test_valid_jpeg(self, tmp_path):
-        """Test valid JPEG file passes MIME validation."""
-        img = Image.new("RGB", (10, 10), color="blue")
-        img_path = os.path.join(tmp_path, "test.jpg")
-        img.save(img_path, "JPEG")
-
-        assert validate_image_mime_type(str(img_path))
-
-    def test_invalid_text_file(self, tmp_path):
-        """Test that text file fails MIME validation."""
-        txt_path = os.path.join(tmp_path, "test.txt")
-        with open(txt_path, "w") as f:
-            f.write("This is not an image")
-
-        assert not validate_image_mime_type(str(txt_path))
-
-    def test_spoofed_extension(self, tmp_path):
-        """Test that text file with .png extension fails MIME validation."""
-        fake_png = os.path.join(tmp_path, "fake.png")
-        with open(fake_png, "w") as f:
-            f.write("This is actually text")
-
-        assert not validate_image_mime_type(str(fake_png))
-
-
-class TestPilImageValidation:
-    """Test PIL image format and dimension validation."""
-
-    def test_valid_formats(self):
-        """Test that allowed PIL formats pass validation."""
-        valid_formats = ["PNG", "JPEG", "GIF", "WEBP", "BMP"]
-        for fmt in valid_formats:
-            img = Image.new("RGB", (100, 100))
-            img.format = fmt
-            assert validate_pil_image(img), f"{fmt} should be allowed"
-
-    def test_invalid_format(self):
-        """Test that unsupported PIL format fails validation."""
-        img = Image.new("RGB", (100, 100))
-        img.format = "INVALID"
-        assert not validate_pil_image(img)
-
-    def test_dimensions_within_limits(self):
-        """Test that images within dimension limits pass."""
-        img = Image.new("RGB", (4096, 4096))
-        img.format = "PNG"
-        assert validate_pil_image(img)
-
-    def test_dimensions_exceed_limits(self):
-        """Test that oversized images fail validation."""
-        img = Image.new("RGB", (5000, 5000))
-        img.format = "PNG"
-        assert not validate_pil_image(img)
-
-    def test_decompression_bomb_protection(self):
-        """Test protection against decompression bombs."""
-        # Image with pixel count exceeding limit
-        img = Image.new("RGB", (4097, 4097))  # Just over 4096*4096
-        img.format = "PNG"
-        assert not validate_pil_image(img)
-
-
-class TestFileSizeLimits:
-    """Test file size limit enforcement."""
-
-    @patch("urllib.request.urlopen")
-    def test_remote_content_length_too_large(self, mock_urlopen):
-        """Test that remote images with large Content-Length are rejected."""
-        mock_response = MagicMock()
-        mock_response.headers.get.return_value = str(
-            11 * 1024 * 1024
-        )  # 11MB > 10MB limit
-        mock_response.__enter__.return_value = mock_response
-        mock_urlopen.return_value = mock_response
-
-        result = open_image("https://example.com/large.jpg")
-        assert result is None
-
-    @patch("urllib.request.urlopen")
-    def test_remote_download_exceeds_limit(self, mock_urlopen):
-        """Test that remote downloads exceeding 10MB during read are rejected."""
-        mock_response = MagicMock()
-        mock_response.headers.get.return_value = (
-            None  # No Content-Length header
-        )
-        # Simulate reading more than 10MB
-        mock_response.read.return_value = b"x" * (11 * 1024 * 1024)
-        mock_response.__enter__.return_value = mock_response
-        mock_urlopen.return_value = mock_response
-
-        result = open_image("https://example.com/sneaky.jpg")
-        assert result is None
-
-    def test_local_file_too_large(self, tmp_path):
-        """Test that local files exceeding 10MB are rejected."""
-        large_file = os.path.join(tmp_path, "large.png")
-        # Create file larger than 10MB
-        with open(large_file, "wb") as f:
-            f.write(b"x" * (11 * 1024 * 1024))
-
-        result = open_image(str(large_file))
-        assert result is None
 
 
 class TestIntegrationOpenImage:
@@ -222,10 +55,16 @@ class TestIntegrationOpenImage:
         result = open_image(os.path.join(tmp_path, "nonexistent.png"))
         assert result is None
 
+    @patch("ledfx.utils.validate_url_safety")
     @patch("ledfx.utils.build_browser_request")
     @patch("urllib.request.urlopen")
-    def test_valid_remote_image(self, mock_urlopen, mock_build_request):
+    def test_valid_remote_image(
+        self, mock_urlopen, mock_build_request, mock_validate_url
+    ):
         """Test downloading valid remote image."""
+        # Mock URL validation to pass
+        mock_validate_url.return_value = (True, None)
+
         # Create a small valid PNG in memory
         img = Image.new("RGB", (10, 10), color="red")
         img_bytes = io.BytesIO()
@@ -260,6 +99,45 @@ class TestIntegrationOpenImage:
         result = open_image("https://example.com/file.txt")
         assert result is None
 
+    @patch("ledfx.utils.validate_url_safety")
+    @patch("ledfx.utils.build_browser_request")
+    @patch("urllib.request.urlopen")
+    def test_extensionless_remote_url_success(
+        self, mock_urlopen, mock_build_request, mock_validate_url
+    ):
+        """Test that remote URLs without extensions work (relies on Content-Type header)."""
+        # Mock URL validation to pass
+        mock_validate_url.return_value = (True, None)
+
+        # Create a small valid PNG in memory
+        img = Image.new("RGB", (10, 10), color="blue")
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, "PNG")
+        img_data = img_bytes.getvalue()
+
+        # Mock the browser request builder
+        mock_build_request.return_value = MagicMock()
+
+        mock_response = MagicMock()
+        headers_dict = {
+            "Content-Length": str(len(img_data)),
+            "ETag": "xyz789",
+            "Last-Modified": "Tue, 02 Jan 2024 00:00:00 GMT",
+            "Content-Type": "image/png",
+        }
+        mock_response.headers.get = lambda key, default=None: headers_dict.get(
+            key, default
+        )
+        mock_response.read.return_value = img_data
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = False
+        mock_urlopen.return_value = mock_response
+
+        # Test with CDN-style URL without extension (validated via Content-Type header)
+        result = open_image("https://cdn.example.com/image/abc123def456")
+        assert result is not None
+        assert isinstance(result, Image.Image)
+
 
 class TestIntegrationOpenGif:
     """Integration tests for open_gif function."""
@@ -289,6 +167,47 @@ class TestIntegrationOpenGif:
 
         result = open_gif(str(png_path))
         assert result is not None
+        assert hasattr(result, "n_frames")
+        assert result.n_frames == 1
+
+    @patch("ledfx.utils.validate_url_safety")
+    @patch("ledfx.utils.build_browser_request")
+    @patch("urllib.request.urlopen")
+    def test_extensionless_remote_gif_url_success(
+        self, mock_urlopen, mock_build_request, mock_validate_url
+    ):
+        """Test that remote GIF URLs without extensions work."""
+        # Mock URL validation to pass
+        mock_validate_url.return_value = (True, None)
+
+        # Create a small valid GIF in memory
+        img = Image.new("RGB", (10, 10), color="green")
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, "GIF")
+        img_data = img_bytes.getvalue()
+
+        # Mock the browser request builder
+        mock_build_request.return_value = MagicMock()
+
+        mock_response = MagicMock()
+        headers_dict = {
+            "Content-Length": str(len(img_data)),
+            "ETag": "gif123",
+            "Last-Modified": "Wed, 03 Jan 2024 00:00:00 GMT",
+            "Content-Type": "image/gif",
+        }
+        mock_response.headers.get = lambda key, default=None: headers_dict.get(
+            key, default
+        )
+        mock_response.read.return_value = img_data
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = False
+        mock_urlopen.return_value = mock_response
+
+        # Test with extension-less URL
+        result = open_gif("https://example.com/api/animation")
+        assert result is not None
+        assert isinstance(result, Image.Image)
         assert hasattr(result, "n_frames")
         assert result.n_frames == 1
 
@@ -543,6 +462,73 @@ class TestURLParsing:
         )
 
 
+class TestExtensionlessRemoteURLs:
+    """Test that remote URLs without file extensions are allowed (validated via Content-Type header)."""
+
+    def test_http_url_no_extension_allowed(self):
+        """Test that HTTP URLs without extension are allowed."""
+        assert is_allowed_image_extension("http://example.com/image")
+        assert is_allowed_image_extension("http://cdn.example.com/abc123")
+
+    def test_https_url_no_extension_allowed(self):
+        """Test that HTTPS URLs without extension are allowed."""
+        assert is_allowed_image_extension("https://example.com/image")
+        assert is_allowed_image_extension(
+            "https://cdn.example.com/image/abc123"
+        )
+
+    def test_cdn_urls_without_extension_allowed(self):
+        """Test that CDN URLs without extensions are allowed (content validated via HTTP headers)."""
+        # CDN-style hash-based URLs without extensions
+        assert is_allowed_image_extension(
+            "https://cdn.example.com/image/ab67616d0000b273a1b2c3d4e5f6a7b8c9d0e1f2"
+        )
+        # With query parameters
+        assert is_allowed_image_extension(
+            "https://images.example/content/ab67616d0000b273?size=large"
+        )
+
+    def test_remote_url_with_path_no_extension(self):
+        """Test remote URLs with paths but no extension."""
+        assert is_allowed_image_extension("https://example.com/api/v1/image")
+        assert is_allowed_image_extension(
+            "https://example.com/user/123/profile"
+        )
+
+    def test_remote_url_no_extension_with_query(self):
+        """Test remote URL without extension but with query string."""
+        assert is_allowed_image_extension(
+            "https://example.com/image?id=123&size=large"
+        )
+
+    def test_remote_url_no_extension_with_fragment(self):
+        """Test remote URL without extension but with fragment."""
+        assert is_allowed_image_extension("https://example.com/image#preview")
+
+    def test_local_file_no_extension_rejected(self):
+        """Test that local files without extension are still rejected."""
+        assert not is_allowed_image_extension("/path/to/file")
+        assert not is_allowed_image_extension("./relative/file")
+        assert not is_allowed_image_extension("filename")
+
+    def test_local_file_invalid_extension_rejected(self):
+        """Test that local files with invalid extensions are rejected."""
+        assert not is_allowed_image_extension("/path/to/file.txt")
+        assert not is_allowed_image_extension("./relative/file.pdf")
+
+    def test_remote_url_with_valid_extension_still_works(self):
+        """Test that remote URLs with valid extensions still work."""
+        assert is_allowed_image_extension("https://example.com/image.png")
+        assert is_allowed_image_extension("https://example.com/photo.jpg")
+        assert is_allowed_image_extension("https://example.com/anim.gif")
+
+    def test_remote_url_with_invalid_extension_rejected(self):
+        """Test that remote URLs with explicitly invalid extensions are rejected."""
+        assert not is_allowed_image_extension("https://example.com/file.txt")
+        assert not is_allowed_image_extension("https://example.com/doc.pdf")
+        assert not is_allowed_image_extension("https://example.com/script.py")
+
+
 # Test Scenarios Documentation
 """
 GOOD SCENARIOS (Should Pass):
@@ -553,6 +539,7 @@ GOOD SCENARIOS (Should Pass):
 5. Files with correct MIME types matching their content
 6. URLs pointing to public IP addresses
 7. URLs with query strings and fragments
+8. Remote URLs (http/https) without file extensions (validated via Content-Type header)
 
 BAD SCENARIOS (Should Fail):
 1. Files with disallowed extensions (.txt, .pdf, .exe, etc.)
@@ -563,14 +550,15 @@ BAD SCENARIOS (Should Fail):
 6. Files with incorrect MIME types
 7. Images with unsupported PIL formats
 8. Nonexistent files
-9. URLs with invalid extensions
-10. URLs pointing to loopback addresses (127.0.0.0/8, ::1)
-11. URLs pointing to private networks (10/8, 172.16/12, 192.168/16, fc00::/7)
-12. URLs pointing to link-local addresses (169.254/16, fe80::/10)
-13. URLs pointing to cloud metadata endpoints (169.254.169.254)
-14. URLs using non-HTTP/HTTPS protocols in remote requests (validated by validate_url_safety)
-15. Hostnames that resolve to blocked IP addresses
-16. Non-HTTP/HTTPS URL schemes in local file path handling (file://, ftp://, data:, javascript:, etc.)
+9. Remote URLs with explicitly invalid extensions (.txt, .pdf, etc.)
+10. Local files without extensions or with invalid extensions
+11. URLs pointing to loopback addresses (127.0.0.0/8, ::1)
+12. URLs pointing to private networks (10/8, 172.16/12, 192.168/16, fc00::/7)
+13. URLs pointing to link-local addresses (169.254/16, fe80::/10)
+14. URLs pointing to cloud metadata endpoints (169.254.169.254)
+15. URLs using non-HTTP/HTTPS protocols in remote requests (validated by validate_url_safety)
+16. Hostnames that resolve to blocked IP addresses
+17. Non-HTTP/HTTPS URL schemes in local file path handling (file://, ftp://, data:, javascript:, etc.)
 """
 
 
@@ -582,47 +570,7 @@ class TestPathTraversalNaughtyStrings:
         # Initialize cache to set config_dir for path validation
         init_image_cache(str(tmp_path))
 
-        # Path traversal patterns from big-list-of-naughty-strings
-        naughty_paths = [
-            # Classic path traversal
-            "../etc/passwd",
-            "../../etc/passwd",
-            "../../../etc/passwd",
-            "../../../../etc/passwd",
-            # With image extension
-            "../../../etc/passwd.png",
-            "../../etc/shadow.jpg",
-            # Windows path traversal
-            "..\\..\\..\\Windows\\System32\\config\\SAM",
-            "..\\..\\..\\Windows\\System32\\config\\SAM.png",
-            # Encoded path traversal
-            "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-            "..%2F..%2F..%2Fetc%2Fpasswd",
-            # Double encoded
-            "%252e%252e%252f%252e%252e%252f%252e%252e%252fetc%252fpasswd",
-            # Unicode encoding
-            "..%c0%af..%c0%af..%c0%afetc%c0%afpasswd",
-            # Various separators
-            "....//....//....//etc/passwd",
-            "..../..../..../etc/passwd",
-            # Null byte injection
-            "../../../etc/passwd%00.png",
-            "../../../etc/passwd\x00.png",
-            # Absolute paths (should be outside allowed dirs)
-            "/etc/passwd.png",
-            "/etc/shadow.jpg",
-            "C:\\Windows\\System32\\config\\SAM.png",
-            "/root/.ssh/id_rsa.png",
-            # Mixed separators
-            "..\\../..\\../etc/passwd",
-            "../\\../\\../etc/passwd",
-            # Overlong paths
-            "." * 1000 + "/etc/passwd.png",
-            # Special characters
-            "../etc/passwd\n.png",
-            "../etc/passwd\r\n.png",
-            "../etc/passwd\t.png",
-        ]
+        # Use shared path traversal patterns
 
         for naughty_path in naughty_paths:
             result = open_image(naughty_path)
@@ -637,35 +585,7 @@ class TestPathTraversalNaughtyStrings:
 
     def test_url_injection_attempts(self):
         """Test that URL injection attempts are blocked."""
-        # URL injection patterns from big-list-of-naughty-strings
-        naughty_urls = [
-            # Protocol injection
-            "http://example.com@127.0.0.1/image.png",
-            "http://127.0.0.1@example.com/image.png",
-            "http://127.0.0.1%2f@example.com/image.png",
-            # Port manipulation
-            "http://127.0.0.1:80/image.png",
-            "http://127.0.0.1:8080/image.png",
-            "http://localhost:80/image.png",
-            # IPv6 variants
-            "http://[::1]:80/image.png",
-            "http://[0:0:0:0:0:0:0:1]/image.png",
-            "http://[::ffff:127.0.0.1]/image.png",
-            # URL encoding tricks
-            "http://127.0.0.1%09/image.png",
-            "http://127.0.0.1%0a/image.png",
-            "http://127.0.0.1%0d/image.png",
-            # Octal representation
-            "http://0177.0.0.1/image.png",
-            "http://0x7f.0.0.1/image.png",
-            # Integer representation
-            "http://2130706433/image.png",  # 127.0.0.1 as integer
-            # Localhost variations
-            "http://localhost/image.png",
-            "http://LOCALHOST/image.png",
-            "http://127.1/image.png",
-        ]
-
+        # Use shared URL injection patterns
         for naughty_url in naughty_urls:
             result = open_image(naughty_url)
             # Should be blocked by SSRF protection or URL validation
@@ -683,28 +603,7 @@ class TestPathTraversalNaughtyStrings:
         # Initialize cache to set config_dir for path validation
         init_image_cache(str(tmp_path))
 
-        # Special filenames from big-list-of-naughty-strings
-        naughty_filenames = [
-            # Reserved names on Windows
-            "CON.png",
-            "PRN.jpg",
-            "AUX.gif",
-            "NUL.png",
-            "COM1.jpg",
-            "LPT1.png",
-            # NTFS alternate data streams
-            "test.png::$DATA",
-            "image.jpg:hidden.txt",
-            # Long filenames
-            "A" * 300 + ".png",
-            # Control characters
-            "test\x00.png",
-            "test\x01\x02\x03.png",
-            # Unicode homoglyphs
-            "іmage.png",  # Cyrillic і instead of latin i
-            "imаge.png",  # Cyrillic а instead of latin a
-        ]
-
+        # Use shared special filename patterns
         for naughty_filename in naughty_filenames:
             # Create path (most will fail at file system level anyway)
             test_path = os.path.join(tmp_path, naughty_filename)

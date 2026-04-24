@@ -7,9 +7,12 @@ from tests.conftest import all_effects, audio_configs
 from tests.test_definitions.coexistance import coexistance_tests
 from tests.test_definitions.devices import device_tests
 from tests.test_definitions.effects import effect_tests
+from tests.test_definitions.lifx import lifx_tests
 from tests.test_definitions.log import log_api_tests
+from tests.test_definitions.preset_delete import preset_delete_tests
 from tests.test_definitions.proof_of_life import proof_of_life_tests
 from tests.test_definitions.virtual_config import virtual_config_tests
+from tests.test_definitions.virtual_fallback import virtual_fallback_tests
 from tests.test_utilities.consts import SERVER_PATH
 from tests.test_utilities.test_utils import HTTPSession
 
@@ -34,8 +37,11 @@ test_groups = [
     ("all_effects", all_effects),
     ("audio_configs", audio_configs),
     ("virtual_config_tests", virtual_config_tests),
+    ("virtual_fallback_tests", virtual_fallback_tests),
     ("coexistance_tests", coexistance_tests),
     ("log_api_tests", log_api_tests),
+    ("preset_delete_tests", preset_delete_tests),
+    ("lifx_tests", lifx_tests),
 ]
 
 # Define a list of all test cases

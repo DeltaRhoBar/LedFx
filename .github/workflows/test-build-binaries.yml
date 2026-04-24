@@ -63,7 +63,7 @@ jobs:
           uv run python -c "import ledfx; print(ledfx.__version__, end='')" | tr -d '\n' > ledfx_version.txt
 
       - name: Upload LedFx Version
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ledfx_version.txt
           path: ${{ github.workspace }}/ledfx_version.txt
@@ -84,14 +84,14 @@ jobs:
         run: |
           cd installer && makensis //DPRODUCT_VERSION=${{ steps.ledfx-version.outputs.ledfx-version }} ledfx.nsi
       - name: Upload LedFx Binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-windows-x64
           path: ${{ github.workspace }}/dist/*
 
       - name: Upload LedFx Setup
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-windows-x64-setup
@@ -143,7 +143,7 @@ jobs:
         run: |
           tar -cvf LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-intel.tar ./dist/LedFx.app
       - name: Upload LedFx Binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-intel
@@ -200,7 +200,7 @@ jobs:
         run: |
           tar -cvf LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-arm64.tar ./dist/LedFx.app
       - name: Upload LedFx Binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-arm64
@@ -266,7 +266,7 @@ jobs:
         run: |
           docker save ${{ env.GHCR_IMAGE }}:edge-${{ matrix.ARCH }}-${{ github.sha }} | gzip -1 > image-${{ matrix.ARCH }}.tar.gz
       - name: Upload image artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: image-${{ matrix.ARCH }}
           path: image-${{ matrix.ARCH }}.tar.gz
@@ -288,7 +288,7 @@ jobs:
         uses: docker/setup-qemu-action@v3
 
       - name: Download image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: image-${{ matrix.ARCH }}
       - name: Load Docker image
@@ -300,7 +300,7 @@ jobs:
         run: |
           docker run --rm --entrypoint ledfx ${{ env.GHCR_IMAGE }}:edge-${{ matrix.ARCH }}-${{ github.sha }} --version | sed 's/LedFx //' > ledfx_version_docker.txt
       - name: Upload image artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ledfx_version_docker-${{ matrix.ARCH }}
           path: ledfx_version_docker.txt
@@ -332,7 +332,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Download ledfx version docker txt
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version_docker-${{ env.ARCH }}
       - name: Get LedFx Version
@@ -382,7 +382,7 @@ jobs:
       - name: Setup CI sound system
         uses: LABSN/sound-ci-helpers@v1
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -390,7 +390,7 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Download LedFx Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-windows-x64
       - name: Run LedFx
@@ -402,7 +402,7 @@ jobs:
     needs: [build-ledfx-windows, build-ledfx-osx-x64]
     steps:
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -410,7 +410,7 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Download LedFx Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-intel
       - name: Run LedFx
@@ -424,7 +424,7 @@ jobs:
     needs: [build-ledfx-windows, build-ledfx-osx-arm64]
     steps:
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -432,7 +432,7 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Download LedFx Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-arm64
       - name: Run LedFx
@@ -450,7 +450,7 @@ jobs:
       - name: Check out code from GitHub
         uses: actions/checkout@v6
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
           path: dist/
@@ -460,7 +460,7 @@ jobs:
           echo ledfx-version=$(cat dist/ledfx_version.txt) >> $GITHUB_OUTPUT
           rm -rf dist/ledfx_version.txt
       - name: Download OSX (x64) Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-intel
           path: dist/
@@ -474,7 +474,7 @@ jobs:
           cd ..
           rm -rf dist/*
       - name: Download Windows (x64) Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-windows-x64
           path: dist/
@@ -486,7 +486,7 @@ jobs:
           cd ..
           rm -rf dist/*
       - name: Download Windows (x64) Setup
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-windows-x64-setup
           path: setup/
@@ -499,7 +499,7 @@ jobs:
              "LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-setup.exe"
           cd ..
       - name: Download OS X (arm64) Binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-osx-arm64
           path: dist/
@@ -535,7 +535,7 @@ jobs:
         with:
           python-version: ${{ env.DEFAULT_PYTHON }}
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -559,12 +559,12 @@ jobs:
         run: |
           uv build
       - name: Package the wheel
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-wheel
           path: dist/ledfx-*.whl
       - name: Package the sdist
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-sdist
           path: dist/ledfx-*.tar.gz
@@ -575,7 +575,7 @@ jobs:
     needs: [build-test-wheel-and-sdist]
     steps:
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -583,7 +583,7 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Get the wheel
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-wheel
       - name: Install uv
@@ -609,7 +609,7 @@ jobs:
     needs: [build-test-wheel-and-sdist]
     steps:
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -617,7 +617,7 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Get the sdist
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-sdist
       - name: Install uv
@@ -644,7 +644,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
       - name: Get LedFx Version
@@ -652,12 +652,12 @@ jobs:
         run: |
           echo ledfx-version=$(cat ledfx_version.txt) >> $GITHUB_OUTPUT
       - name: Get the wheel
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-wheel
           path: dist/
       - name: Get the sdist
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: LedFx-${{ steps.ledfx-version.outputs.ledfx-version }}-sdist
           path: dist/
@@ -687,7 +687,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download LedFx Version
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: ledfx_version.txt
           path: dist/

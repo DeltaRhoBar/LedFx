@@ -54,10 +54,16 @@ class CacheImagesEndpoint(RestEndpoint):
 
         Query Parameters:
             url (optional): Specific URL to clear. If omitted, clears entire cache.
+            all_variants (optional): If "true" and url provided, clears all cache entries
+                                    for that URL (including thumbnails with different params).
 
         Returns:
-            Success response with cleared_count (and freed_bytes for full clear),
-            or error response if URL not found or cache not initialized.
+            Bare response with cache operation results:
+            - url + all_variants="true": {"cleared_count": int}
+            - url + all_variants="false": {"deleted": bool, "cleared_count": int}
+            - no url (clear all): {"cleared_count": int, "freed_bytes": int}
+
+            Error responses use standard format with status/payload for validation errors.
         """
         cache = get_image_cache()
 
@@ -68,26 +74,25 @@ class CacheImagesEndpoint(RestEndpoint):
             )
 
         url = request.query.get("url")
+        # Query params are always strings - accept "true"/"false" (case-insensitive)
+        all_variants = (
+            request.query.get("all_variants", "false").lower() == "true"
+        )
 
         if url:
-            # Clear specific URL
-            deleted = cache.delete(url)
-            if deleted:
-                return await self.request_success(
-                    type="success",
-                    message=f"Cleared cache for URL: {url}",
-                    data={"cleared_count": 1},
+            if all_variants:
+                # Clear all entries for this URL (all thumbnail variants)
+                cleared_count = cache.delete_all_for_url(url)
+                return await self.bare_request_success(
+                    {"cleared_count": cleared_count}
                 )
             else:
-                return await self.invalid_request(
-                    message=f"URL not found in cache: {url}",
-                    type="warning",
+                # Clear specific URL (without params)
+                deleted = cache.delete(url)
+                return await self.bare_request_success(
+                    {"deleted": deleted, "cleared_count": 1 if deleted else 0}
                 )
         else:
             # Clear entire cache
             result = cache.clear()
-            return await self.request_success(
-                type="success",
-                message="Entire cache cleared",
-                data=result,
-            )
+            return await self.bare_request_success(result)

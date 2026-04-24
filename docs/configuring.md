@@ -1,5 +1,13 @@
 # Configuration
 
+## Audio analysis options - pitch method and onset method
+
+Caution: The defaults are default for a reason!
+
+(Developer) documentation describing the available onset and pitch methods is available here:
+- [Onset method](https://aubio.org/doc/latest/specdesc_8h.html)
+- [Pitch method](https://aubio.org/doc/latest/pitch_8h.html)
+
 ## Firmware Specific
 
 Once you have LedFx installed, it's time to add some devices! Make sure
@@ -31,6 +39,18 @@ device using the following configuration based on your firmware:
 
   - **Manual Configuration:**
 
+    - **Add WLED as DDP Device: Preferred Method**
+
+      - If your WLED version is prior to 0.13:
+
+        - Enable DDP support from the 'Sync Settings' page on the WLED web-interface and reboot WLED.
+
+      - For all versions:
+
+        - Enter the name and IP address.
+        - Enter the total number of pixels.
+        - Click Submit.
+
     - **Add WLED as UDP Device:**
 
       - Enter the name for your device and its IP address.
@@ -44,18 +64,6 @@ device using the following configuration based on your firmware:
       - If your WLED version is prior to 0.13:
 
         - Enable E1.31 support from the 'Sync Settings' page on the WLED web-interface and reboot WLED.
-
-      - For all versions:
-
-        - Enter the name and IP address.
-        - Enter the total number of pixels.
-        - Click Submit.
-
-    - **Add WLED as DDP Device:**
-
-      - If your WLED version is prior to 0.13:
-
-        - Enable DDP support from the 'Sync Settings' page on the WLED web-interface and reboot WLED.
 
       - For all versions:
 
